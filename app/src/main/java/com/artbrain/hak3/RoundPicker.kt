@@ -100,20 +100,20 @@ private fun RoundCell(e: ExamRow, onPick: (Int) -> Unit) {
             )
         }
         Spacer(Modifier.height(6.dp))
-        Text(
-            if (live) e.date?.replace('-', '.') ?: "" else "본문 없음",
-            fontSize = 11.sp,
-            color = Hak3.TextDim,
-            textAlign = TextAlign.Center,
-        )
-        // 이 회차에서 어디까지 갈라 두었는지
+        // 갈라 둔 게 있으면 날짜 자리에 그 개수를 대신 적는다 — 셀 높이는 늘 같다
         if (counts.any) {
-            Spacer(Modifier.height(7.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Tally(Hak3.Green, counts.known)
                 Tally(Hak3.Amber, counts.amber)
                 Tally(Hak3.Red, counts.red)
             }
+        } else {
+            Text(
+                if (live) e.date?.replace('-', '.') ?: "" else "본문 없음",
+                fontSize = 11.sp,
+                color = Hak3.TextDim,
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }
@@ -123,8 +123,8 @@ private fun Tally(color: Color, n: Int) {
     if (n == 0) return
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(6.dp).background(color, CircleShape))
-        Spacer(Modifier.width(3.dp))
-        Text("$n", fontSize = 10.sp, color = color)
+        Spacer(Modifier.width(4.dp))
+        Text("$n", fontSize = 11.sp, color = color)
     }
 }
 
