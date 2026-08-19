@@ -141,12 +141,32 @@ private fun split(item: Item): Pair<String, String?> {
     return plain to null
 }
 
-private fun headSize(len: Int) = when {
-    len <= 2 -> 98.sp
-    len <= 4 -> 78.sp
-    len <= 7 -> 56.sp
-    len <= 12 -> 42.sp
-    else -> 32.sp
+/**
+ * 묻는 말이 차지하는 폭을 어림한다. 한자와 한글은 한 칸, 괄호·기호는 반 칸,
+ * 빈칸은 그보다 좁게 친다. `( )却` 처럼 괄호가 절반인 문항이 글자 수만으로는
+ * 길어 보여 쓸데없이 작아지던 것을 막는다.
+ */
+private fun span(s: String): Float {
+    var w = 0f
+    for (c in s) {
+        w += when {
+            c.isWhitespace() -> 0.35f
+            c in '\uAC00'..'\uD7A3' -> 1f          // 한글
+            c in '\u3400'..'\u9FFF' -> 1f          // 한자
+            c in '\uF900'..'\uFAFF' -> 1f          // 호환 한자
+            else -> 0.5f                           // 괄호·기호·숫자
+        }
+    }
+    return w
+}
+
+private fun headSize(w: Float) = when {
+    w <= 2.2f -> 98.sp
+    w <= 3.2f -> 88.sp
+    w <= 4.4f -> 66.sp
+    w <= 6.2f -> 52.sp
+    w <= 8.5f -> 42.sp
+    else -> 34.sp
 }
 
 
@@ -208,7 +228,6 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
                             page = p,
                             revealed = open[p.item.no] == true,
                             mark = marks.state[p.item.no],
-                            border = filter,
                             radius = radius,
                             onLifted = { lifted = it },
                             onMark = { m -> marks.set(p.item.no, m) },
@@ -436,7 +455,6 @@ private fun QuestionPage(
     page: Page,
     revealed: Boolean,
     mark: Mark?,
-    border: Mark?,
     radius: Dp,
     onLifted: (Boolean) -> Unit,
     onMark: (Mark?) -> Unit,
@@ -547,18 +565,12 @@ private fun QuestionPage(
                 .offset(y = -LEAD)
                 .padding(horizontal = 24.dp, vertical = 26.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(item.label, fontSize = 17.sp, color = Hak3.TextDim)
-                // 필터를 걸지 않았을 때도 이 문항이 어느 목록에 있는지 보이게 한다
-                if (mark != null && border == null) {
-                    Spacer(Modifier.width(8.dp))
-                    Box(
-                        Modifier
-                            .size(9.dp)
-                            .background(borderColor(mark), CircleShape)
-                    )
-                }
-            }
+            // 어느 목록에 담겼는지는 번호에 입힌 색으로 알린다
+            Text(
+                item.label,
+                fontSize = 17.sp,
+                color = if (mark != null) borderColor(mark) else Hak3.TextDim,
+            )
             Spacer(Modifier.height(6.dp))
 
             // 묻는 것은 언제나 같은 자리, 같은 글꼴로 크게. 길이에 따라 크기만 준다.
@@ -569,8 +581,8 @@ private fun QuestionPage(
                     head,
                     fontFamily = ThinHanja,
                     fontWeight = FontWeight.Thin,
-                    fontSize = headSize(head.length),
-                    lineHeight = headSize(head.length) * 1.18f,
+                    fontSize = headSize(span(head)),
+                    lineHeight = headSize(span(head)) * 1.18f,
                     color = Hak3.Hanja,
                 )
                 if (tail != null) {
@@ -608,7 +620,7 @@ private fun AnswerSlot(item: Item, revealed: Boolean) {
         // 원의 28dp 제약에 갇히면 큰 글자가 잘린다.
         Box(
             Modifier
-                .offset(x = DOT + 18.dp, y = -(if (hanja) INK_HANJA else INK_HANGUL))
+                .offset(x = DOT + 18.dp, y = DROP - (if (hanja) INK_HANJA else INK_HANGUL))
                 .size(0.dp)
                 .wrapContentSize(align = Alignment.TopStart, unbounded = true)
         ) {
@@ -659,6 +671,9 @@ private val FLUSH_TOP = TextStyle(
  */
 private val INK_HANJA = 19.dp
 private val INK_HANGUL = 10.dp
+
+/** 윗선을 맞춘 뒤 눈에 맞게 조금 내려 앉히는 만큼. */
+private val DROP = 4.dp
 
 /** 펼친 정답이 쓰이는 폭. 원 아래에 겹쳐 그리므로 제 폭을 스스로 정한다. */
 private val ANSWER = 260.dp

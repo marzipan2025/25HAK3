@@ -32,8 +32,10 @@ import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -96,10 +98,21 @@ private fun RoundCell(e: ExamRow, radius: Dp, onPick: (Int) -> Unit) {
         Spacer(Modifier.height(6.dp))
         // 갈라 둔 게 있으면 날짜 자리에 그 개수를 대신 적는다 — 셀 높이는 늘 같다
         if (counts.any) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Tally(Hak3.Green, counts.known)
-                Tally(Hak3.Amber, counts.amber)
-            }
+            // 노랑 몇 · 초록 몇. 한쪽만 있으면 빗금도 없다.
+            Text(
+                buildAnnotatedString {
+                    if (counts.amber > 0) {
+                        withStyle(SpanStyle(color = Hak3.Amber)) { append("${counts.amber}") }
+                    }
+                    if (counts.amber > 0 && counts.known > 0) {
+                        withStyle(SpanStyle(color = Hak3.TextDim)) { append(" / ") }
+                    }
+                    if (counts.known > 0) {
+                        withStyle(SpanStyle(color = Hak3.Green)) { append("${counts.known}") }
+                    }
+                },
+                fontSize = 11.sp,
+            )
         } else {
             Text(
                 if (live) e.date?.replace('-', '.') ?: "" else "본문 없음",
@@ -111,15 +124,6 @@ private fun RoundCell(e: ExamRow, radius: Dp, onPick: (Int) -> Unit) {
     }
 }
 
-@Composable
-private fun Tally(color: Color, n: Int) {
-    if (n == 0) return
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(6.dp).background(color, CircleShape))
-        Spacer(Modifier.width(4.dp))
-        Text("$n", fontSize = 11.sp, color = color)
-    }
-}
 
 /**
  * 판 번호를 적어 두고, 새 판이 있으면 눌러서 받도록 한다.
