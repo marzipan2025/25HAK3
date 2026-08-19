@@ -43,12 +43,12 @@ import androidx.compose.ui.unit.sp
 fun RoundPicker(exams: List<ExamRow>, meta: Map<String, String>, onPick: (Int) -> Unit) {
     // 상세 화면 카드와 같은 곡률
     val radius = (screenCornerRadius() - 8.dp).coerceAtLeast(0.dp)
-    val span = exams.mapNotNull { it.date?.take(4) }
     LazyVerticalGrid(
         columns = GridCells.Adaptive(112.dp),
-        contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 32.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        // 좌우 여백은 상세 화면 카드와 같은 8dp
+        contentPadding = PaddingValues(8.dp, 8.dp, 8.dp, 32.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(Modifier.padding(bottom = 14.dp, top = 12.dp)) {
@@ -60,9 +60,7 @@ fun RoundPicker(exams: List<ExamRow>, meta: Map<String, String>, onPick: (Int) -
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "한자능력검정 ${meta["grade"] ?: "3급"} · 기출 ${exams.size}회 · " +
-                        "${span.minOrNull() ?: ""}–${span.maxOrNull() ?: ""}" +
-                        (meta["built"]?.let { " · 데이터 $it" } ?: ""),
+                    meta["built"]?.let { "데이터 $it" } ?: "",
                     fontSize = 14.sp,
                     color = Hak3.TextDim,
                 )

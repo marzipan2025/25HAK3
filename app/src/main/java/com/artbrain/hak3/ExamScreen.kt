@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import kotlinx.coroutines.delay
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.Orientation
@@ -180,14 +181,12 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
                             border = filter,
                             radius = radius,
                             onLifted = { lifted = it },
-                            // 표시가 실제로 바뀌었을 때만 다음 문항으로. 양 끝에서 더 민
+                            onMark = { m -> marks.set(p.item.no, m) },
+                            // 표시가 실제로 바뀌었을 때만 넘어간다. 양 끝에서 더 민
                             // 경우(초록을 또 위로)는 바뀐 게 없으니 그 자리에 머문다.
-                            onMark = { m ->
-                                if (m != marks.state[p.item.no]) {
-                                    marks.set(p.item.no, m)
-                                    if (i < pages.size - 1) {
-                                        scope.launch { pager.animateScrollToPage(i + 1) }
-                                    }
+                            onAdvance = {
+                                if (i < pages.size - 1) {
+                                    scope.launch { pager.animateScrollToPage(i + 1) }
                                 }
                             },
                         ) { open[p.item.no] = open[p.item.no] != true }
@@ -328,6 +327,7 @@ private fun QuestionPage(
     radius: Dp,
     onLifted: (Boolean) -> Unit,
     onMark: (Mark?) -> Unit,
+    onAdvance: () -> Unit,
     onTap: () -> Unit,
 ) {
     val item = page.item
@@ -369,8 +369,16 @@ private fun QuestionPage(
                     // 그 사이 들어온 손짓이 한 번 더 판정해 버린다.
                     if (kotlin.math.abs(next) > reach) {
                         settled = true
-                        onMark(step(mark, next < 0f))
-                        scope.launch { lift.animateTo(0f, RETURN) }
+                        val turned = step(mark, next < 0f)
+                        scope.launch {
+                            if (turned != mark) onMark(turned)
+                            lift.animateTo(0f, RETURN)
+                            // 제자리에 앉는 것을 보고 나서 넘긴다
+                            if (turned != mark) {
+                                delay(HOLD)
+                                onAdvance()
+                            }
+                        }
                     } else {
                         scope.launch { lift.snapTo(next) }
                     }
@@ -493,6 +501,9 @@ private val RETURN = tween<Float>(450, easing = FastOutSlowInEasing)
 
 /** 문턱을 못 넘고 손을 뗐을 때. */
 private val SETTLE = tween<Float>(320, easing = FastOutSlowInEasing)
+
+/** 카드가 다 돌아온 뒤 다음 문항으로 넘어가기까지 쉬는 참. */
+private const val HOLD = 260L
 
 /**
  * 화면 바닥에 붙는 한 줄 — 왼쪽 설정, 가운데 슬라이더, 오른쪽 노랑 단추.
