@@ -58,7 +58,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -540,6 +543,8 @@ private fun QuestionPage(
         Column(
             Modifier
                 .fillMaxWidth()
+                // 기준점을 위로. 카드 한가운데가 아니라 그보다 60dp 높은 자리에 선다.
+                .offset(y = -LEAD)
                 .padding(horizontal = 24.dp, vertical = 26.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -554,30 +559,35 @@ private fun QuestionPage(
                     )
                 }
             }
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(6.dp))
 
             // 묻는 것은 언제나 같은 자리, 같은 글꼴로 크게. 길이에 따라 크기만 준다.
+            // 한자부터 아래로는 한 덩이로 끌어올린다 — 번호와의 사이를 좁히기 위해서다.
             val (head, tail) = split(item)
-            Text(
-                head,
-                fontFamily = ThinHanja,
-                fontWeight = FontWeight.Thin,
-                fontSize = headSize(head.length),
-                lineHeight = headSize(head.length) * 1.18f,
-                color = Hak3.Hanja,
-            )
-            if (tail != null) {
-                Spacer(Modifier.height(18.dp))
+            Column(Modifier.offset(y = -TIGHTEN)) {
                 Text(
-                    underlined(tail, Hak3.Hanja),
-                    fontSize = 22.sp,
-                    lineHeight = 36.sp,
-                    color = Hak3.TextDim,
+                    head,
+                    fontFamily = ThinHanja,
+                    fontWeight = FontWeight.Thin,
+                    fontSize = headSize(head.length),
+                    lineHeight = headSize(head.length) * 1.18f,
+                    color = Hak3.Hanja,
                 )
-            }
+                if (tail != null) {
+                    // 지문만 위로 당긴다. 아래 정답 자리는 그만큼 도로 벌려 두어
+                    // 점과 정답의 좌표는 그대로 있게 한다.
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        underlined(tail, Hak3.Hanja),
+                        fontSize = 22.sp,
+                        lineHeight = 36.sp,
+                        color = Hak3.TextDim,
+                    )
+                }
 
-            Spacer(Modifier.height(26.dp))
-            AnswerSlot(item, revealed)
+                Spacer(Modifier.height(if (tail != null) 38.dp else 26.dp))
+                AnswerSlot(item, revealed)
+            }
         }
     }
 }
@@ -598,7 +608,7 @@ private fun AnswerSlot(item: Item, revealed: Boolean) {
         // 원의 28dp 제약에 갇히면 큰 글자가 잘린다.
         Box(
             Modifier
-                .offset(y = DOT + 12.dp)
+                .offset(x = DOT + 18.dp, y = -(if (hanja) INK_HANJA else INK_HANGUL))
                 .size(0.dp)
                 .wrapContentSize(align = Alignment.TopStart, unbounded = true)
         ) {
@@ -610,6 +620,7 @@ private fun AnswerSlot(item: Item, revealed: Boolean) {
                 fontSize = if (hanja) 56.sp else 30.sp,
                 lineHeight = if (hanja) 70.sp else 40.sp,
                 color = if (a != null) Hak3.Neon else Hak3.TextDim,
+                style = FLUSH_TOP,
             )
             item.gloss?.let { g ->
                 Spacer(Modifier.height(6.dp))
@@ -623,6 +634,31 @@ private fun AnswerSlot(item: Item, revealed: Boolean) {
 private val BAR = 64.dp
 private val DOT = 28.dp
 private val TOP = 52.dp
+
+/** 기준점을 카드 한가운데보다 이만큼 위로 올린다. */
+private val LEAD = 60.dp
+
+/** 번호와 한자 사이를 이만큼 좁힌다. 한자 아래의 것들도 함께 딸려 올라온다. */
+private val TIGHTEN = 16.dp
+
+/**
+ * 첫 줄 위에 붙는 여백을 걷어낸다. 글자 상자의 윗변이 곧 글자의 윗선이 되어
+ * 옆에 놓인 점과 눈으로 수평이 맞는다.
+ */
+private val FLUSH_TOP = TextStyle(
+    platformStyle = PlatformTextStyle(includeFontPadding = false),
+    lineHeightStyle = LineHeightStyle(
+        alignment = LineHeightStyle.Alignment.Top,
+        trim = LineHeightStyle.Trim.FirstLineTop,
+    ),
+)
+
+/**
+ * 글자 상자의 윗변과 글자의 실제 윗선 사이에 남는 만큼. 서체가 글자 위에 두는
+ * 여백이라 크기마다 다르다. 화면에서 재어 맞춘 값이다.
+ */
+private val INK_HANJA = 19.dp
+private val INK_HANGUL = 10.dp
 
 /** 펼친 정답이 쓰이는 폭. 원 아래에 겹쳐 그리므로 제 폭을 스스로 정한다. */
 private val ANSWER = 260.dp
