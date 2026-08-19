@@ -39,6 +39,8 @@ object Hak3 {
     val Amber = Color(0xFFFFBD2E)           // 애매하게 모름
     val Red = Color(0xFFFF6157)             // 잘못된 것을 알릴 때
     val Green = Color(0xFF29C745)           // 외웠음
+    val Neon = Color(0xFF3DFF6E)            // 펼쳐진 정답 — 형광 녹색
+    val Navy = Color(0xFF26467A)            // 설정 단추
 }
 
 /**

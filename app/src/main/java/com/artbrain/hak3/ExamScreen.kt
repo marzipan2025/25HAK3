@@ -14,10 +14,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.animation.core.AnimationSpec
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animate
 import kotlinx.coroutines.Job
@@ -168,6 +171,8 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
     val radius = (screenCornerRadius() - OUTER).coerceAtLeast(0.dp)
     // 카드를 들고 있는 동안만 카드층을 맨 위로. 그동안 두 줄은 눌리지 않는다.
     var lifted by remember(round) { mutableStateOf(false) }
+    var settings by remember(round) { mutableStateOf(false) }
+    var markOnLeft by remember(round) { mutableStateOf(Settings.markOnLeft(context)) }
     val index = pager.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
     val page = pages.getOrNull(index)
     // 이 회차를 다음에 열 때 여기서부터 보여 준다
@@ -238,6 +243,7 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
         BottomBar(
             modifier = Modifier.align(Alignment.BottomStart),
             enabled = page != null,
+            markOnLeft = markOnLeft,
             label = page?.item?.label ?: "",
             lastNo = if (filter == null) all.lastOrNull()?.item?.spanEnd else null,
             index = index,
@@ -250,7 +256,89 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
                 scope.launch { pager.animateScrollToPage(index + 1) }
             }
         }
+
+        // 설정을 열면 남색 단추만 남기고 모두 덮는다
+        if (settings) {
+            SettingsPanel(
+                built = db.meta()["built"],
+                markOnLeft = markOnLeft,
+                onMarkSide = { left ->
+                    markOnLeft = left
+                    Settings.setMarkOnLeft(context, left)
+                },
+            )
+            BackHandler { settings = false }
+        }
+        SettingsDot(
+            Modifier.align(if (markOnLeft) Alignment.BottomEnd else Alignment.BottomStart),
+        ) { settings = !settings }
     }
+}
+
+/**
+ * 설정. 바닥의 남색 단추 하나만 남기고 화면을 덮는다.
+ * 적는 말은 영어로 둔다 — 짧고, 줄바꿈에 흔들리지 않는다.
+ */
+@Composable
+private fun SettingsPanel(
+    built: String?,
+    markOnLeft: Boolean,
+    onMarkSide: (Boolean) -> Unit,
+) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Hak3.Ground)
+            // 뒤의 카드가 눌리지 않게 이 층에서 손짓을 삼킨다
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) {}
+            .padding(horizontal = 28.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column {
+            Text("25HAK3", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Hak3.Text)
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "Data ${built ?: "unknown"}",
+                fontSize = 14.sp,
+                color = Hak3.TextDim,
+            )
+            Text(
+                "Version ${BuildConfig.VERSION_NAME}",
+                fontSize = 14.sp,
+                color = Hak3.TextDim,
+            )
+
+            Spacer(Modifier.height(40.dp))
+            Text(
+                "MARK BUTTON",
+                fontSize = 11.sp,
+                letterSpacing = 1.2.sp,
+                color = Hak3.TextDim,
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Side("Left", markOnLeft) { onMarkSide(true) }
+                Side("Right", !markOnLeft) { onMarkSide(false) }
+            }
+        }
+    }
+}
+
+/** 고른 쪽은 앰버로 테를 두른다. */
+@Composable
+private fun Side(label: String, on: Boolean, onPick: () -> Unit) {
+    Text(
+        label,
+        fontSize = 15.sp,
+        color = if (on) Hak3.Amber else Hak3.TextDim,
+        modifier = Modifier
+            .border(1.dp, if (on) Hak3.Amber else Hak3.Rule, RoundedCornerShape(10.dp))
+            .clickable(onClick = onPick)
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+    )
 }
 
 @Composable
@@ -496,33 +584,38 @@ private fun QuestionPage(
 
 @Composable
 private fun AnswerSlot(item: Item, revealed: Boolean) {
-    if (!revealed) {
-        // 글자를 걷어내고 원 하나만 둔다. 누르면 열린다는 것은 카드 전체가 알려 준다.
-        Box(
-            Modifier
-                .size(DOT)
-                .background(Hak3.Rule, CircleShape)
-        )
-        return
-    }
     val a = item.answer
     val hanja = a != null && HANJA.containsMatchIn(a)
-    Column(
+    // 원은 언제나 같은 크기로 자리를 지킨다. 정답은 그 아래에 겹쳐 그리므로
+    // 펼쳐도 위의 한자와 지문이 밀리지 않는다.
+    Box(
         Modifier
-            .background(Hak3.MarkSoft, RoundedCornerShape(9.dp))
-            .padding(horizontal = 18.dp, vertical = 14.dp),
+            .size(DOT)
+            .background(if (revealed) Hak3.Neon else Hak3.Rule, CircleShape)
     ) {
-        Text(
-            a ?: "정답 없음",
-            fontFamily = if (hanja) ThinHanja else FontFamily.Default,
-            fontWeight = if (hanja) FontWeight.Thin else FontWeight.Normal,
-            fontSize = if (hanja) 56.sp else 30.sp,
-            lineHeight = if (hanja) 70.sp else 40.sp,
-            color = if (a != null) Hak3.Mark else Hak3.TextDim,
-        )
-        item.gloss?.let { g ->
-            Spacer(Modifier.height(6.dp))
-            Text(g, fontSize = 17.sp, lineHeight = 27.sp, color = Hak3.MarkDim)
+        if (!revealed) return@Box
+        // 폭도 높이도 없는 자리를 하나 두고, 그 안에서만 제 크기를 갖게 한다.
+        // 원의 28dp 제약에 갇히면 큰 글자가 잘린다.
+        Box(
+            Modifier
+                .offset(y = DOT + 12.dp)
+                .size(0.dp)
+                .wrapContentSize(align = Alignment.TopStart, unbounded = true)
+        ) {
+        Column(Modifier.width(ANSWER)) {
+            Text(
+                a ?: "정답 없음",
+                fontFamily = if (hanja) ThinHanja else FontFamily.Default,
+                fontWeight = if (hanja) FontWeight.Thin else FontWeight.Normal,
+                fontSize = if (hanja) 56.sp else 30.sp,
+                lineHeight = if (hanja) 70.sp else 40.sp,
+                color = if (a != null) Hak3.Neon else Hak3.TextDim,
+            )
+            item.gloss?.let { g ->
+                Spacer(Modifier.height(6.dp))
+                Text(g, fontSize = 17.sp, lineHeight = 27.sp, color = Hak3.Neon.copy(alpha = 0.66f))
+            }
+        }
         }
     }
 }
@@ -530,6 +623,9 @@ private fun AnswerSlot(item: Item, revealed: Boolean) {
 private val BAR = 64.dp
 private val DOT = 28.dp
 private val TOP = 52.dp
+
+/** 펼친 정답이 쓰이는 폭. 원 아래에 겹쳐 그리므로 제 폭을 스스로 정한다. */
+private val ANSWER = 260.dp
 
 /** 이만큼 밀어야 판정이 한 칸 움직인다. */
 private val REACH = 120.dp
@@ -556,6 +652,7 @@ private const val HOLD = 260L
 private fun BottomBar(
     modifier: Modifier,
     enabled: Boolean,
+    markOnLeft: Boolean,
     label: String,
     lastNo: Int?,
     index: Int,
@@ -570,7 +667,9 @@ private fun BottomBar(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SettingsDot()
+        // 설정 단추는 이 줄에 넣지 않고 화면 맨 위층에 따로 띄운다 — 설정을 열면
+        // 그 단추만 남고 나머지가 덮이기 때문이다. 여기서는 자리만 비워 둔다.
+        if (markOnLeft) AmberDot(enabled, onAmber) else Spacer(Modifier.size(BAR))
         Scrubber(
             Modifier.weight(1f),
             index = index,
@@ -578,22 +677,19 @@ private fun BottomBar(
             text = if (lastNo != null) "$label / $lastNo" else "${label}번 · ${index + 1} / $total",
             onSeek = onSeek,
         )
-        AmberDot(enabled, onAmber)
+        if (markOnLeft) Spacer(Modifier.size(BAR)) else AmberDot(enabled, onAmber)
     }
 }
 
-/** 아직 열 화면이 없다. 자리만 잡아 둔다. */
+/** 아이콘 없는 남색 원. 설정을 여닫는다. */
 @Composable
-private fun SettingsDot() {
+private fun SettingsDot(modifier: Modifier, onClick: () -> Unit) {
     Box(
-        Modifier
+        modifier
             .size(BAR)
-            .background(Hak3.Surface, CircleShape)
-            .border(Dp.Hairline, Hak3.Rule, CircleShape),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text("⚙", fontSize = 30.sp, color = Hak3.TextDim)
-    }
+            .background(Hak3.Navy, CircleShape)
+            .clickable(onClick = onClick)
+    )
 }
 
 @Composable
