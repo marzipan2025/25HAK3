@@ -35,11 +35,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
 fun RoundPicker(exams: List<ExamRow>, meta: Map<String, String>, onPick: (Int) -> Unit) {
+    // 상세 화면 카드와 같은 곡률
+    val radius = (screenCornerRadius() - 8.dp).coerceAtLeast(0.dp)
     val span = exams.mapNotNull { it.date?.take(4) }
     LazyVerticalGrid(
         columns = GridCells.Adaptive(112.dp),
@@ -66,39 +69,31 @@ fun RoundPicker(exams: List<ExamRow>, meta: Map<String, String>, onPick: (Int) -
                 UpdateLine()
             }
         }
-        items(exams, key = { it.round }) { e -> RoundCell(e, onPick) }
+        items(exams, key = { it.round }) { e -> RoundCell(e, radius, onPick) }
     }
 }
 
 @Composable
-private fun RoundCell(e: ExamRow, onPick: (Int) -> Unit) {
+private fun RoundCell(e: ExamRow, radius: Dp, onPick: (Int) -> Unit) {
     val context = LocalContext.current
     val counts = remember(e.round) { Marks.counts(context, e.round) }
     val live = e.complete || e.items > 0
     Column(
         Modifier
             .fillMaxWidth()
-            .border(1.dp, Hak3.Rule, RoundedCornerShape(10.dp))
-            .background(Hak3.Surface, RoundedCornerShape(10.dp))
+            .border(1.dp, Hak3.Rule, RoundedCornerShape(radius))
+            .background(Hak3.Surface, RoundedCornerShape(radius))
             .clickable(enabled = live) { onPick(e.round) }
             .padding(vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(
-                "${e.round}",
-                fontFamily = ThinHanja,
-                fontWeight = FontWeight.Thin,
-                fontSize = 40.sp,
-                color = if (live) Hak3.Hanja else Hak3.HanjaDim,
-            )
-            Text(
-                "회",
-                fontSize = 12.sp,
-                color = Hak3.TextDim,
-                modifier = Modifier.padding(start = 3.dp, bottom = 7.dp),
-            )
-        }
+        Text(
+            "${e.round}",
+            fontFamily = ThinHanja,
+            fontWeight = FontWeight.Thin,
+            fontSize = 40.sp,
+            color = if (live) Hak3.Hanja else Hak3.HanjaDim,
+        )
         Spacer(Modifier.height(6.dp))
         // 갈라 둔 게 있으면 날짜 자리에 그 개수를 대신 적는다 — 셀 높이는 늘 같다
         if (counts.any) {

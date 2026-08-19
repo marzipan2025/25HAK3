@@ -326,47 +326,69 @@ private fun QuestionPage(
     // 카드를 얼마나 들어 올렸는가. 문항이 바뀌면 처음부터.
     val lift = remember(item.no) { Animatable(0f) }
     var tall by remember(item.no) { mutableFloatStateOf(1200f) }
+    var wide by remember(item.no) { mutableFloatStateOf(1000f) }
+    // 잡은 손이 카드 가운데에서 얼마나 치우쳤는가. -1(왼쪽 끝) ~ +1(오른쪽 끝).
+    var arm by remember(item.no) { mutableFloatStateOf(0f) }
+    // 60dp 만 움직이면 그 다음은 손을 떼든 말든 그 방향으로 날아간다
+    var thrown by remember(item.no) { mutableStateOf(false) }
     val screen = with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
-    // 뜻을 두고 들었다 싶을 만큼만 움직이면 놓아 준다
-    val bar = with(density) { 80.dp.toPx() }
+    val bar = with(density) { 60.dp.toPx() }
     val grip = (kotlin.math.abs(lift.value) / bar).coerceIn(0f, 1f)
     val up = lift.value < 0f
     val tint = if (up) Hak3.Green else Hak3.Amber
+    // 잡은 자리를 축 삼아 도는 시늉. 왼쪽 아래를 잡고 올리면 오른쪽으로 기운다.
+    val spin = (arm * (lift.value / bar) * 5f).coerceIn(-12f, 12f)
 
-    val edge = if (grip > 0f) lerp(borderColor(border), tint, grip) else borderColor(border)
-    val face = lerp(Hak3.Surface, if (up) Hak3.GreenSoft else Hak3.AmberSoft, grip)
+    val resting = borderColor(mark)          // 담긴 목록의 색. 다시 갈라 놓기 전까지 남는다.
+    val edge = if (grip > 0f) lerp(resting, tint, grip) else resting
+
+    // 문턱을 넘는 순간 손을 기다리지 않고 놓아 준다
+    val fly: suspend (Mark) -> Unit = { verdict ->
+        thrown = true
+        onFlying(true)
+        val to = if (verdict == Mark.KNOWN) -(tall + screen) else tall + screen
+        lift.animateTo(to, tween(230))
+        onVerdict(verdict)
+        delay(300)
+        lift.snapTo(0f)
+        onFlying(false)
+        thrown = false
+    }
 
     Box(
         Modifier
             .fillMaxSize()
-            .graphicsLayer { translationY = lift.value }
-            .background(face, RoundedCornerShape(radius))
-            .border(if (border == null && grip == 0f) 1.dp else 2.dp, edge, RoundedCornerShape(radius))
-            .onSizeChanged { tall = it.height.toFloat() }
-            // 위로 던지면 '외웠다'. 아래로는 끌리지 않는다.
+            .graphicsLayer {
+                translationY = lift.value
+                rotationZ = spin
+            }
+            .background(Hak3.Surface, RoundedCornerShape(radius))
+            .border(if (mark == null && grip == 0f) 1.dp else 2.dp, edge, RoundedCornerShape(radius))
+            .onSizeChanged {
+                tall = it.height.toFloat()
+                wide = it.width.toFloat()
+            }
+            // 위로 던지면 '외웠다', 아래로 내리면 '애매하다'.
             .draggable(
                 state = rememberDraggableState { dy ->
-                    scope.launch { lift.snapTo(lift.value + dy) }
+                    if (thrown) return@rememberDraggableState
+                    scope.launch {
+                        lift.snapTo(lift.value + dy)
+                        val verdict = when {
+                            lift.value < -bar -> Mark.KNOWN
+                            lift.value > bar -> Mark.AMBER
+                            else -> null
+                        }
+                        if (verdict != null && !thrown) fly(verdict)
+                    }
                 },
                 orientation = Orientation.Vertical,
+                onDragStarted = { at ->
+                    arm = ((at.x / wide) * 2f - 1f).coerceIn(-1f, 1f)
+                },
                 onDragStopped = {
-                    val verdict = when {
-                        lift.value < -bar -> Mark.KNOWN
-                        lift.value > bar -> Mark.AMBER
-                        else -> null
-                    }
-                    if (verdict != null) {
-                        onFlying(true)
-                        // 화면 높이만큼 밀어 카드가 온전히 밖으로 나가게 한다
-                        val to = if (verdict == Mark.KNOWN) -(tall + screen) else tall + screen
-                        lift.animateTo(to, tween(210))
-                        onVerdict(verdict)
-                        delay(300)
-                        lift.snapTo(0f)
-                        onFlying(false)
-                    } else {
-                        lift.animateTo(0f, tween(180))
-                    }
+                    // 문턱을 못 넘고 손을 뗐으면 제자리로
+                    if (!thrown) lift.animateTo(0f, tween(180))
                 },
             )
             .pointerInput(item.no) {
