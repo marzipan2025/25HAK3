@@ -70,6 +70,25 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 private val HANJA = Regex("[\\u3400-\\u4DBF\\u4E00-\\u9FFF\\uF900-\\uFAFF]")
+
+/**
+ * 줄은 띄어쓰기에서만 갈린다.
+ *
+ * 한글은 글자 하나하나가 줄바꿈 자리가 될 수 있어서 그냥 두면 '바 / 람직한' 처럼
+ * 낱말 한가운데가 갈린다. 글자 사이에 이음쇠(U+2060)를 끼워 그 자리를 막으면
+ * 남는 자리는 띄어쓰기뿐이다. 이음쇠는 폭이 없어 눈에도, 글자 수에도 잡히지 않는다.
+ * 한 낱말이 한 줄보다 길면 그때는 안드로이드가 알아서 잘라 준다.
+ */
+private const val GLUE = '\u2060'
+
+private fun glue(s: String, before: Char = ' '): String = buildString {
+    var prev = before
+    for (c in s) {
+        if (!c.isWhitespace() && !prev.isWhitespace()) append(GLUE)
+        append(c)
+        prev = c
+    }
+}
 private val OUTER = 8.dp
 
 private class Page(val section: Section, val item: Item)
@@ -159,7 +178,8 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
     // 카드가 캡슐 위로 날아가야 하므로 pager 를 화면 전체로 깔고, 카드만 캡슐·바닥 줄
     // 안쪽으로 밀어 둔다. pager 는 제 영역 밖을 잘라내기 때문에 이렇게 하지 않으면
     // 카드가 캡슐께에서 잘려 사라진다. 바닥 줄은 pager 뒤에 두어 조작을 뺏기지 않는다.
-    val inset = PaddingValues(top = TOP + OUTER, bottom = BAR + BAR / 4)
+    // 위로는 캡슐과 OUTER 만큼, 아래로도 바닥 줄과 OUTER 만큼. 같은 간격이다.
+    val inset = PaddingValues(top = TOP + OUTER, bottom = BAR + OUTER)
     Box(
         Modifier
             .fillMaxSize()
@@ -416,18 +436,24 @@ private fun QuestionPage(
             },
         contentAlignment = Alignment.Center,
     ) {
+        // 무엇을 묻는 문제인지는 카드 맨 위 한가운데 따로 세운다.
+        // 아래 것들과 한 흐름으로 두지 않는다 — 자리도 정렬도 따로 간다.
+        Text(
+            glue(page.section.instruction),
+            fontSize = 15.sp,
+            lineHeight = 22.sp,
+            color = Hak3.TextDim,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth(0.7f)
+                .padding(top = 14.dp),
+        )
         Column(
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp, vertical = 26.dp),
         ) {
-            Text(
-                page.section.instruction,
-                fontSize = 15.sp,
-                lineHeight = 22.sp,
-                color = Hak3.TextDim,
-            )
-            Spacer(Modifier.height(20.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(item.label, fontSize = 17.sp, color = Hak3.TextDim)
                 // 필터를 걸지 않았을 때도 이 문항이 어느 목록에 있는지 보이게 한다
@@ -471,14 +497,11 @@ private fun QuestionPage(
 @Composable
 private fun AnswerSlot(item: Item, revealed: Boolean) {
     if (!revealed) {
-        Text(
-            "눌러서 정답 보기",
-            fontSize = 14.sp,
-            letterSpacing = 0.5.sp,
-            color = Hak3.TextDim,
-            modifier = Modifier
-                .border(1.dp, Hak3.Rule, RoundedCornerShape(9.dp))
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+        // 글자를 걷어내고 원 하나만 둔다. 누르면 열린다는 것은 카드 전체가 알려 준다.
+        Box(
+            Modifier
+                .size(DOT)
+                .background(Hak3.Rule, CircleShape)
         )
         return
     }
@@ -569,7 +592,7 @@ private fun SettingsDot() {
             .border(Dp.Hairline, Hak3.Rule, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        Text("⚙", fontSize = 20.sp, color = Hak3.TextDim)
+        Text("⚙", fontSize = 30.sp, color = Hak3.TextDim)
     }
 }
 
@@ -640,22 +663,37 @@ private fun Scrubber(
     }
 }
 
-/** question_html 의 <u> 표시를 그대로 밑줄로 옮긴다. */
+/** 다음 <u> 또는 </u> 가 시작되는 자리. 없으면 끝. */
+private fun nextTag(s: String, from: Int): Int {
+    var k = from
+    while (k < s.length) {
+        if (s.startsWith("<u>", k) || s.startsWith("</u>", k)) return k
+        k++
+    }
+    return s.length
+}
+
+/**
+ * question_html 의 <u> 표시를 그대로 밑줄로 옮긴다.
+ * 이음쇠는 뒤따르는 토막과 같은 꾸밈으로 붙여 밑줄이 끊기지 않게 한다.
+ */
 private fun underlined(html: String, mark: Color): AnnotatedString = buildAnnotatedString {
+    val line = SpanStyle(color = mark, textDecoration = TextDecoration.Underline)
     var i = 0
+    var open = false
+    var prev = ' '
     while (i < html.length) {
-        val open = html.indexOf("<u>", i)
-        if (open < 0) {
-            append(html.substring(i)); return@buildAnnotatedString
+        when {
+            html.startsWith("<u>", i) -> { open = true; i += 3 }
+            html.startsWith("</u>", i) -> { open = false; i += 4 }
+            else -> {
+                val j = nextTag(html, i)
+                val chunk = html.substring(i, j)
+                val glued = glue(chunk, prev)
+                if (open) withStyle(line) { append(glued) } else append(glued)
+                prev = chunk.lastOrNull() ?: prev
+                i = j
+            }
         }
-        append(html.substring(i, open))
-        val close = html.indexOf("</u>", open)
-        if (close < 0) {
-            append(html.substring(open + 3)); return@buildAnnotatedString
-        }
-        withStyle(SpanStyle(color = mark, textDecoration = TextDecoration.Underline)) {
-            append(html.substring(open + 3, close))
-        }
-        i = close + 4
     }
 }
