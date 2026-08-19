@@ -15,6 +15,10 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -67,6 +72,8 @@ fun RoundPicker(exams: List<ExamRow>, meta: Map<String, String>, onPick: (Int) -
 
 @Composable
 private fun RoundCell(e: ExamRow, onPick: (Int) -> Unit) {
+    val context = LocalContext.current
+    val counts = remember(e.round) { Marks.counts(context, e.round) }
     val live = e.complete || e.items > 0
     Column(
         Modifier
@@ -99,6 +106,25 @@ private fun RoundCell(e: ExamRow, onPick: (Int) -> Unit) {
             color = Hak3.TextDim,
             textAlign = TextAlign.Center,
         )
+        // 이 회차에서 어디까지 갈라 두었는지
+        if (counts.any) {
+            Spacer(Modifier.height(7.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Tally(Hak3.Green, counts.known)
+                Tally(Hak3.Amber, counts.amber)
+                Tally(Hak3.Red, counts.red)
+            }
+        }
+    }
+}
+
+@Composable
+private fun Tally(color: Color, n: Int) {
+    if (n == 0) return
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(6.dp).background(color, CircleShape))
+        Spacer(Modifier.width(3.dp))
+        Text("$n", fontSize = 10.sp, color = color)
     }
 }
 

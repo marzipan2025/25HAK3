@@ -16,7 +16,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -30,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +44,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
@@ -53,12 +62,20 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val HANJA = Regex("[\\u3400-\\u4DBF\\u4E00-\\u9FFF\\uF900-\\uFAFF]")
-private val OUTER = 4.dp
+private val OUTER = 8.dp
 
 private class Page(val section: Section, val item: Item)
+
+private fun borderColor(m: Mark?) = when (m) {
+    Mark.AMBER -> Hak3.Amber
+    Mark.RED -> Hak3.Red
+    Mark.KNOWN -> Hak3.Green
+    null -> Hak3.Rule
+}
 
 /**
  * 문항을 '묻는 식'과 '딸린 설명'으로 가른다.
@@ -116,7 +133,7 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
         Modifier
             .fillMaxSize()
             .background(Hak3.Ground)
-            .padding(top = OUTER)
+            .padding(OUTER)
     ) {
         TopBar(
             round = round,
@@ -131,15 +148,16 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
             onBack = onBack,
         )
 
+        Spacer(Modifier.height(OUTER))
+
         if (pages.isEmpty()) {
-            EmptyList(filter, Modifier.weight(1f).padding(horizontal = OUTER), radius)
+            EmptyList(filter, Modifier.weight(1f), radius)
         } else {
             HorizontalPager(
                 state = pager,
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = OUTER),
+                    .fillMaxWidth(),
                 pageSpacing = 6.dp,
             ) { i ->
                 pages.getOrNull(i)?.let { p ->
@@ -149,6 +167,12 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
                         mark = marks.state[p.item.no],
                         border = filter,
                         radius = radius,
+                        onKnow = {
+                            marks.set(p.item.no, Mark.KNOWN)
+                            if (filter == null && index < pages.size - 1) {
+                                scope.launch { pager.animateScrollToPage(index + 1) }
+                            }
+                        },
                     ) { open[p.item.no] = open[p.item.no] != true }
                 }
             }
@@ -187,29 +211,37 @@ private fun TopBar(
     onFilter: (Mark) -> Unit,
     onBack: () -> Unit,
 ) {
-    Row(
+    Box(
         Modifier
             .fillMaxWidth()
-            .padding(bottom = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .height(TOP)
+            .background(Hak3.Surface, CircleShape)
+            .padding(horizontal = 10.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        FilterDot(Hak3.Amber, filter == Mark.AMBER, amber) { onFilter(Mark.AMBER) }
-        Spacer(Modifier.width(8.dp))
-        FilterDot(Hak3.Red, filter == Mark.RED, red) { onFilter(Mark.RED) }
-        Spacer(Modifier.width(14.dp))
-        Text("제${round}회", fontSize = 15.sp, color = Hak3.Text)
-        if (section != null) {
-            Spacer(Modifier.width(9.dp))
-            Text(
-                "問 ${section.start}–${section.end}",
-                fontSize = 12.sp,
-                letterSpacing = 0.8.sp,
-                color = Hak3.Hanja,
-            )
+        Row(
+            Modifier.align(Alignment.CenterStart),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            FilterDot(Hak3.Amber, filter == Mark.AMBER, amber) { onFilter(Mark.AMBER) }
+            Spacer(Modifier.width(8.dp))
+            FilterDot(Hak3.Red, filter == Mark.RED, red) { onFilter(Mark.RED) }
         }
-        Spacer(Modifier.weight(1f))
+        // 회차와 문항 구간은 한 덩이로 캡슐 한가운데
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("제${round}회", fontSize = 14.sp, color = Hak3.Text)
+            if (section != null) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "問 ${section.start}–${section.end}",
+                    fontSize = 14.sp,
+                    color = Hak3.Hanja,
+                )
+            }
+        }
         Box(
             Modifier
+                .align(Alignment.CenterEnd)
                 .size(DOT)
                 .background(Hak3.Rule, CircleShape)
                 .clickable(onClick = onBack),
@@ -247,7 +279,11 @@ private fun EmptyList(filter: Mark?, modifier: Modifier, radius: Dp) {
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            if (filter == Mark.AMBER) "애매한 문항이 없습니다." else "모르는 문항이 없습니다.",
+            when (filter) {
+                Mark.AMBER -> "애매한 문항이 없습니다."
+                Mark.RED -> "모르는 문항이 없습니다."
+                else -> "외운 문항이 없습니다."
+            },
             fontSize = 16.sp,
             color = Hak3.TextDim,
             textAlign = TextAlign.Center,
@@ -262,30 +298,56 @@ private fun QuestionPage(
     mark: Mark?,
     border: Mark?,
     radius: Dp,
+    onKnow: () -> Unit,
     onTap: () -> Unit,
 ) {
     val item = page.item
-    val edge = when (border) {
-        Mark.AMBER -> Hak3.Amber
-        Mark.RED -> Hak3.Red
-        null -> Hak3.Rule
-    }
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    // 카드를 얼마나 들어 올렸는가. 문항이 바뀌면 처음부터.
+    val lift = remember(item.no) { Animatable(0f) }
+    var tall by remember(item.no) { mutableFloatStateOf(1200f) }
+    // 카드 위쪽에 머리말이 얹혀 있으므로 그만큼 더 밀어 올려야 완전히 사라진다
+    val away = with(density) { (TOP + OUTER * 3).toPx() }
+    val bar = with(density) { 150.dp.toPx() }        // 이만큼 넘기면 놓아 준다
+    val grip = (-lift.value / bar).coerceIn(0f, 1f)
+
+    val edge = if (grip > 0f) lerp(borderColor(border), Hak3.Green, grip) else borderColor(border)
+    val face = lerp(Hak3.Surface, Hak3.GreenSoft, grip)
+
     Box(
         Modifier
             .fillMaxSize()
-            .background(Hak3.Surface, RoundedCornerShape(radius))
-            .border(if (border == null) 1.dp else 2.dp, edge, RoundedCornerShape(radius))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onTap,
-            ),
+            .graphicsLayer { translationY = lift.value }
+            .background(face, RoundedCornerShape(radius))
+            .border(if (border == null && grip == 0f) 1.dp else 2.dp, edge, RoundedCornerShape(radius))
+            .onSizeChanged { tall = it.height.toFloat() }
+            // 위로 던지면 '외웠다'. 아래로는 끌리지 않는다.
+            .draggable(
+                state = rememberDraggableState { dy ->
+                    scope.launch { lift.snapTo((lift.value + dy).coerceAtMost(0f)) }
+                },
+                orientation = Orientation.Vertical,
+                onDragStopped = {
+                    if (lift.value < -bar) {
+                        // 카드 높이만큼으로는 머리말 아래에서 잘린 채 멈춘다. 화면 위로 온전히 뺀다.
+                        lift.animateTo(-(tall + away), tween(210))
+                        onKnow()
+                        delay(300)
+                        lift.snapTo(0f)
+                    } else {
+                        lift.animateTo(0f, tween(180))
+                    }
+                },
+            )
+            .pointerInput(item.no) {
+                detectTapGestures { onTap() }
+            },
         contentAlignment = Alignment.Center,
     ) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 26.dp),
         ) {
             Text(
@@ -303,10 +365,7 @@ private fun QuestionPage(
                     Box(
                         Modifier
                             .size(9.dp)
-                            .background(
-                                if (mark == Mark.AMBER) Hak3.Amber else Hak3.Red,
-                                CircleShape,
-                            )
+                            .background(borderColor(mark), CircleShape)
                     )
                 }
             }
@@ -378,6 +437,7 @@ private class Verdict(val color: Color, val mark: Mark?)
 
 private val BAR = 64.dp
 private val DOT = 28.dp
+private val TOP = 52.dp
 
 /**
  * 화면 바닥에 붙는 한 줄 — 왼쪽 판정 원, 가운데 슬라이더, 오른쪽 판정 원.
@@ -400,10 +460,12 @@ private fun BottomBar(
     onSeek: (Int) -> Unit,
     onPick: (Mark?) -> Unit,
 ) {
+    // 지금 보고 있는 목록에서 옮겨 갈 수 있는 두 곳
     val pair = when (filter) {
         null -> listOf(Verdict(Hak3.Amber, Mark.AMBER), Verdict(Hak3.Red, Mark.RED))
-        Mark.AMBER -> listOf(Verdict(Hak3.Green, null), Verdict(Hak3.Red, Mark.RED))
-        Mark.RED -> listOf(Verdict(Hak3.Green, null), Verdict(Hak3.Amber, Mark.AMBER))
+        Mark.AMBER -> listOf(Verdict(Hak3.Green, Mark.KNOWN), Verdict(Hak3.Red, Mark.RED))
+        Mark.RED -> listOf(Verdict(Hak3.Green, Mark.KNOWN), Verdict(Hak3.Amber, Mark.AMBER))
+        Mark.KNOWN -> listOf(Verdict(Hak3.Amber, Mark.AMBER), Verdict(Hak3.Red, Mark.RED))
     }
     Row(
         Modifier
