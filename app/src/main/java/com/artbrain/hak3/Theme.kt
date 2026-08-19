@@ -5,7 +5,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
@@ -35,26 +37,35 @@ object Hak3 {
 
     // 01haka 신호등 세 색. 애매/모름/외움을 가른다.
     val Amber = Color(0xFFFFBD2E)           // 애매하게 모름
-    val Red = Color(0xFFFF6157)             // 아예 모름
-    val Green = Color(0xFF29C745)           // 목록에서 빼기
-    val GreenSoft = Color(0xFF15301C)       // 카드를 위로 들었을 때의 바탕
-    val AmberSoft = Color(0xFF322611)       // 카드를 아래로 내렸을 때의 바탕
+    val Red = Color(0xFFFF6157)             // 잘못된 것을 알릴 때
+    val Green = Color(0xFF29C745)           // 외웠음
 }
 
 /**
  * 기기 화면의 실제 라운딩 반경. Android 12부터 WindowInsets로 읽을 수 있다.
  * 카드를 outerMargin 만큼 안으로 들이면 반경도 그만큼 줄여야 화면 곡률과 동심원이 된다.
+ *
+ * 창이 붙기 전에는 insets 가 비어 있다. 첫 조합에서 한 번만 읽고 말면 그 빈 값이
+ * 굳어 fallback 이 그대로 남으므로, 값이 올 때까지 몇 프레임 더 들여다본다.
+ * 기기 곡률이 fallback 보다 큰 폰에서는 이 차이가 눈에 띈다.
  */
 @Composable
 fun screenCornerRadius(fallback: Dp = 32.dp): Dp {
     val view = LocalView.current
     val density = LocalDensity.current
-    return remember(view) {
-        val px = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            view.rootWindowInsets?.getRoundedCorner(RoundedCorner.POSITION_TOP_LEFT)?.radius
-        } else null
-        if (px != null && px > 0) with(density) { px.toDp() } else fallback
+    val px by produceState<Int?>(null, view) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return@produceState
+        repeat(60) {
+            val r = view.rootWindowInsets
+                ?.getRoundedCorner(RoundedCorner.POSITION_TOP_LEFT)?.radius
+            if (r != null && r > 0) {
+                value = r
+                return@produceState
+            }
+            withFrameNanos { }
+        }
     }
+    return px?.let { with(density) { it.toDp() } } ?: fallback
 }
 
 /** 한자를 크고 얇게 띄우기 위한 Thin(w100) 서체. 시스템 CJK에는 이 굵기가 없다. */

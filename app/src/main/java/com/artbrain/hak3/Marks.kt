@@ -5,11 +5,15 @@ import android.content.SharedPreferences
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.runtime.mutableStateMapOf
 
-/** 문항을 어느 목록에 담아 두었는가. */
-enum class Mark { AMBER, RED, KNOWN }
+/**
+ * 문항을 어느 목록에 담아 두었는가.
+ *
+ * 노랑 ← 일반 → 초록 한 축이다. 없음이 가운데고 양쪽 끝이 이 둘이다.
+ */
+enum class Mark { AMBER, KNOWN }
 
 /**
- * 회차마다 '애매하게 모름 · 아예 모름 · 외움' 세 목록을 들고 있는다.
+ * 회차마다 '애매하게 모름 · 외움' 두 목록을 들고 있는다.
  * 다음에 앱을 열었을 때도 남아 있어야 기록으로서 뜻이 있으므로 SharedPreferences에 적는다.
  * 저장 형식은 `12:A,37:R,55:K` — 사람이 읽고 고칠 수 있는 편이 뒤탈이 적다.
  */
@@ -34,16 +38,15 @@ class Marks(context: Context, round: Int) {
 
         private fun tag(m: Mark) = when (m) {
             Mark.AMBER -> "A"
-            Mark.RED -> "R"
             Mark.KNOWN -> "K"
         }
 
         private fun read(prefs: SharedPreferences, key: String): Map<Int, Mark> = buildMap {
             prefs.getString(key, "")!!.split(',').forEach { part ->
                 val (no, t) = part.split(':').takeIf { it.size == 2 } ?: return@forEach
+                // R 은 없앤 '아예 모름'. 남아 있으면 버린다.
                 val mark = when (t) {
                     "A" -> Mark.AMBER
-                    "R" -> Mark.RED
                     "K" -> Mark.KNOWN
                     else -> null
                 }
@@ -69,13 +72,12 @@ class Marks(context: Context, round: Int) {
             val m = read(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE), keyOf(round))
             return Counts(
                 amber = m.count { it.value == Mark.AMBER },
-                red = m.count { it.value == Mark.RED },
                 known = m.count { it.value == Mark.KNOWN },
             )
         }
     }
 }
 
-data class Counts(val amber: Int, val red: Int, val known: Int) {
-    val any: Boolean get() = amber > 0 || red > 0 || known > 0
+data class Counts(val amber: Int, val known: Int) {
+    val any: Boolean get() = amber > 0 || known > 0
 }

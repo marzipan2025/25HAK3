@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.Orientation
@@ -35,7 +36,6 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -48,9 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -66,7 +64,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import kotlin.math.roundToInt
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val HANJA = Regex("[\\u3400-\\u4DBF\\u4E00-\\u9FFF\\uF900-\\uFAFF]")
@@ -76,9 +73,23 @@ private class Page(val section: Section, val item: Item)
 
 private fun borderColor(m: Mark?) = when (m) {
     Mark.AMBER -> Hak3.Amber
-    Mark.RED -> Hak3.Red
     Mark.KNOWN -> Hak3.Green
     null -> Hak3.Rule
+}
+
+/**
+ * 표시는 한 축 위에 놓인다 — 노랑(애매) ← 일반 → 초록(외움).
+ * 위로 밀면 초록 쪽으로 한 칸, 아래로 밀면 노랑 쪽으로 한 칸.
+ * 양 끝에서 더 밀어도 그 자리에 머문다.
+ */
+private fun step(m: Mark?, up: Boolean): Mark? = if (up) when (m) {
+    Mark.AMBER -> null
+    null -> Mark.KNOWN
+    Mark.KNOWN -> Mark.KNOWN
+} else when (m) {
+    Mark.KNOWN -> null
+    null -> Mark.AMBER
+    Mark.AMBER -> Mark.AMBER
 }
 
 /**
@@ -121,12 +132,11 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
     var filter by remember(round) { mutableStateOf<Mark?>(null) }
     val open = remember(round) { mutableStateMapOf<Int, Boolean>() }
 
-    // 필터를 걸면 그 목록에 담긴 문항만 넘긴다. 목록에서 빠지면 이 리스트도 곧바로 줄어든다.
-    val pages by remember(all) {
-        derivedStateOf {
-            filter?.let { f -> all.filter { marks.state[it.item.no] == f } } ?: all
-        }
-    }
+    // 목록을 열면 그때의 구성을 붙잡아 둔다. 판정으로 목록에서 빠져도 카드는 그 자리에
+    // 남아, 노랑을 한 번 올려 일반으로, 한 번 더 올려 초록으로 이어 갈 수 있다.
+    // 담긴 수는 위 필터 원의 숫자가 곧바로 알려 준다.
+    var listed by remember(round) { mutableStateOf<List<Page>?>(null) }
+    val pages = listed ?: all
     val start = remember(round, all) {
         val no = Marks.lastSeen(context, round)
         all.indexOfFirst { it.item.no == no }.coerceAtLeast(0)
@@ -134,8 +144,8 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
     val pager = rememberPagerState(initialPage = start, pageCount = { pages.size })
     val scope = rememberCoroutineScope()
     val radius = (screenCornerRadius() - OUTER).coerceAtLeast(0.dp)
-    // 카드가 날아가는 동안만 카드층을 맨 위로. 그 사이 두 줄은 눌리지 않지만 200ms 뿐이다.
-    var flying by remember(round) { mutableStateOf(false) }
+    // 카드를 들고 있는 동안만 카드층을 맨 위로. 그동안 두 줄은 눌리지 않는다.
+    var lifted by remember(round) { mutableStateOf(false) }
     val index = pager.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
     val page = pages.getOrNull(index)
     // 이 회차를 다음에 열 때 여기서부터 보여 준다
@@ -158,7 +168,7 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
         } else {
             HorizontalPager(
                 state = pager,
-                modifier = Modifier.fillMaxSize().zIndex(if (flying) 1f else 0f),
+                modifier = Modifier.fillMaxSize().zIndex(if (lifted) 1f else 0f),
                 pageSpacing = 6.dp,
             ) { i ->
                 pages.getOrNull(i)?.let { p ->
@@ -169,13 +179,10 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
                             mark = marks.state[p.item.no],
                             border = filter,
                             radius = radius,
-                            onFlying = { flying = it },
-                            onVerdict = { m ->
-                                marks.set(p.item.no, m)
-                                if (filter == null && index < pages.size - 1) {
-                                    scope.launch { pager.animateScrollToPage(index + 1) }
-                                }
-                            },
+                            onLifted = { lifted = it },
+                            // 카드가 제자리로 돌아오므로 다음 문항으로 넘기지 않는다.
+                            // 표시를 고친 자리를 눈으로 확인하고 넘어가도록.
+                            onMark = { m -> marks.set(p.item.no, m) },
                         ) { open[p.item.no] = open[p.item.no] != true }
                     }
                 }
@@ -190,9 +197,10 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
             section = page?.section,
             filter = filter,
             amber = marks.count(Mark.AMBER),
-            red = marks.count(Mark.RED),
             onFilter = { f ->
-                filter = if (filter == f) null else f
+                val next = if (filter == f) null else f
+                filter = next
+                listed = next?.let { m -> all.filter { marks.state[it.item.no] == m } }
                 scope.launch { pager.scrollToPage(0) }
             },
             onBack = onBack,
@@ -201,17 +209,16 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
 
         BottomBar(
             modifier = Modifier.align(Alignment.BottomStart),
-            filter = filter,
             enabled = page != null,
             label = page?.item?.label ?: "",
             lastNo = if (filter == null) all.lastOrNull()?.item?.spanEnd else null,
             index = index,
             total = pages.size,
             onSeek = { scope.launch { pager.scrollToPage(it) } },
-        ) { chosen ->
+        ) {
             val no = page?.item?.no ?: return@BottomBar
-            marks.set(no, chosen)
-            if (filter == null && index < pages.size - 1) {
+            marks.set(no, Mark.AMBER)
+            if (index < pages.size - 1) {
                 scope.launch { pager.animateScrollToPage(index + 1) }
             }
         }
@@ -225,7 +232,6 @@ private fun TopBar(
     section: Section?,
     filter: Mark?,
     amber: Int,
-    red: Int,
     onFilter: (Mark) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -242,8 +248,6 @@ private fun TopBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             FilterDot(Hak3.Amber, filter == Mark.AMBER, amber) { onFilter(Mark.AMBER) }
-            Spacer(Modifier.width(8.dp))
-            FilterDot(Hak3.Red, filter == Mark.RED, red) { onFilter(Mark.RED) }
         }
         // 회차와 문항 구간은 한 덩이로 캡슐 한가운데
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -299,7 +303,6 @@ private fun EmptyList(filter: Mark?, modifier: Modifier, radius: Dp) {
         Text(
             when (filter) {
                 Mark.AMBER -> "애매한 문항이 없습니다."
-                Mark.RED -> "모르는 문항이 없습니다."
                 else -> "외운 문항이 없습니다."
             },
             fontSize = 16.sp,
@@ -316,8 +319,8 @@ private fun QuestionPage(
     mark: Mark?,
     border: Mark?,
     radius: Dp,
-    onFlying: (Boolean) -> Unit,
-    onVerdict: (Mark) -> Unit,
+    onLifted: (Boolean) -> Unit,
+    onMark: (Mark?) -> Unit,
     onTap: () -> Unit,
 ) {
     val item = page.item
@@ -325,35 +328,19 @@ private fun QuestionPage(
     val density = LocalDensity.current
     // 카드를 얼마나 들어 올렸는가. 문항이 바뀌면 처음부터.
     val lift = remember(item.no) { Animatable(0f) }
-    var tall by remember(item.no) { mutableFloatStateOf(1200f) }
     var wide by remember(item.no) { mutableFloatStateOf(1000f) }
     // 잡은 손이 카드 가운데에서 얼마나 치우쳤는가. -1(왼쪽 끝) ~ +1(오른쪽 끝).
     var arm by remember(item.no) { mutableFloatStateOf(0f) }
-    // 60dp 만 움직이면 그 다음은 손을 떼든 말든 그 방향으로 날아간다
-    var thrown by remember(item.no) { mutableStateOf(false) }
-    val screen = with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
-    val bar = with(density) { 60.dp.toPx() }
-    val grip = (kotlin.math.abs(lift.value) / bar).coerceIn(0f, 1f)
-    val up = lift.value < 0f
-    val tint = if (up) Hak3.Green else Hak3.Amber
+    // 한 번 끄는 동안 판정은 한 번뿐이다. 문턱을 넘나들며 색이 뒤집히지 않게.
+    var settled by remember(item.no) { mutableStateOf(false) }
+    val reach = with(density) { REACH.toPx() }
+    val tilt = with(density) { TILT.toPx() }
     // 잡은 자리를 축 삼아 도는 시늉. 왼쪽 아래를 잡고 올리면 오른쪽으로 기운다.
-    val spin = (arm * (lift.value / bar) * 5f).coerceIn(-12f, 12f)
+    // 문턱과 따로 두어 기울기는 예전 손맛 그대로다.
+    val spin = (arm * (lift.value / tilt) * 5f).coerceIn(-12f, 12f)
 
-    val resting = borderColor(mark)          // 담긴 목록의 색. 다시 갈라 놓기 전까지 남는다.
-    val edge = if (grip > 0f) lerp(resting, tint, grip) else resting
-
-    // 문턱을 넘는 순간 손을 기다리지 않고 놓아 준다
-    val fly: suspend (Mark) -> Unit = { verdict ->
-        thrown = true
-        onFlying(true)
-        val to = if (verdict == Mark.KNOWN) -(tall + screen) else tall + screen
-        lift.animateTo(to, tween(230))
-        onVerdict(verdict)
-        delay(300)
-        lift.snapTo(0f)
-        onFlying(false)
-        thrown = false
-    }
+    // 들려 있는 동안에는 캡슐과 바닥 줄 위로 올라온다
+    LaunchedEffect(lift.value != 0f) { onLifted(lift.value != 0f) }
 
     Box(
         Modifier
@@ -363,23 +350,22 @@ private fun QuestionPage(
                 rotationZ = spin
             }
             .background(Hak3.Surface, RoundedCornerShape(radius))
-            .border(if (mark == null && grip == 0f) 1.dp else 2.dp, edge, RoundedCornerShape(radius))
-            .onSizeChanged {
-                tall = it.height.toFloat()
-                wide = it.width.toFloat()
-            }
-            // 위로 던지면 '외웠다', 아래로 내리면 '애매하다'.
+            // 표시가 없으면 1픽셀, 담긴 카드는 1dp. 어느 쪽이든 카드 경계 안쪽에 붙는다.
+            .border(if (mark == null) Dp.Hairline else 1.dp, borderColor(mark), RoundedCornerShape(radius))
+            .onSizeChanged { wide = it.width.toFloat() }
+            // 위로 밀면 초록 쪽으로, 아래로 밀면 노랑 쪽으로 한 칸. 카드는 제자리로 돌아온다.
             .draggable(
                 state = rememberDraggableState { dy ->
-                    if (thrown) return@rememberDraggableState
-                    scope.launch {
-                        lift.snapTo(lift.value + dy)
-                        val verdict = when {
-                            lift.value < -bar -> Mark.KNOWN
-                            lift.value > bar -> Mark.AMBER
-                            else -> null
-                        }
-                        if (verdict != null && !thrown) fly(verdict)
+                    if (settled) return@rememberDraggableState
+                    val next = lift.value + dy
+                    // 판정은 손가락이 문턱을 넘는 그 자리에서 바로. 코루틴을 기다리면
+                    // 그 사이 들어온 손짓이 한 번 더 판정해 버린다.
+                    if (kotlin.math.abs(next) > reach) {
+                        settled = true
+                        onMark(step(mark, next < 0f))
+                        scope.launch { lift.animateTo(0f, RETURN) }
+                    } else {
+                        scope.launch { lift.snapTo(next) }
                     }
                 },
                 orientation = Orientation.Vertical,
@@ -387,8 +373,9 @@ private fun QuestionPage(
                     arm = ((at.x / wide) * 2f - 1f).coerceIn(-1f, 1f)
                 },
                 onDragStopped = {
-                    // 문턱을 못 넘고 손을 뗐으면 제자리로
-                    if (!thrown) lift.animateTo(0f, tween(180))
+                    // 문턱을 못 넘고 손을 뗐으면 제자리로. 넘었으면 이미 돌아가는 중이다.
+                    if (!settled) lift.animateTo(0f, SETTLE)
+                    settled = false
                 },
             )
             .pointerInput(item.no) {
@@ -484,41 +471,39 @@ private fun AnswerSlot(item: Item, revealed: Boolean) {
     }
 }
 
-private class Verdict(val color: Color, val mark: Mark?)
-
 private val BAR = 64.dp
 private val DOT = 28.dp
 private val TOP = 52.dp
 
+/** 이만큼 밀어야 판정이 한 칸 움직인다. */
+private val REACH = 120.dp
+
+/** 기울기의 기준. 문턱과 따로 두어 도는 맛은 예전 그대로 둔다. */
+private val TILT = 60.dp
+
+/** 판정하고 제자리로. 색이 바뀐 것을 보고 나서 천천히 내려앉는다. */
+private val RETURN = tween<Float>(450, easing = FastOutSlowInEasing)
+
+/** 문턱을 못 넘고 손을 뗐을 때. */
+private val SETTLE = tween<Float>(320, easing = FastOutSlowInEasing)
+
 /**
- * 화면 바닥에 붙는 한 줄 — 왼쪽 판정 원, 가운데 슬라이더, 오른쪽 판정 원.
+ * 화면 바닥에 붙는 한 줄 — 왼쪽 설정, 가운데 슬라이더, 오른쪽 노랑 단추.
  * 셋이 너비를 꽉 채운다. 문항 번호는 슬라이더 한가운데에 얹는다.
  *
- * 판정 단추가 무엇을 묻는지는 지금 보고 있는 목록에 따라 달라진다.
- *   평상시    – 애매하게 모름(노랑) / 아예 모름(빨강)
- *   노랑 목록 – 외웠음(초록) / 아예 모름(빨강, 빨강 목록으로 넘김)
- *   빨강 목록 – 외웠음(초록) / 애매하게 앎(노랑, 노랑 목록으로 넘김)
- * 어느 경우든 누르면 지금 보고 있는 목록에서는 빠진다.
+ * 초록(외웠음)은 단추로 두지 않는다. 카드를 위로 미는 것이 그 자리다.
  */
 @Composable
 private fun BottomBar(
     modifier: Modifier,
-    filter: Mark?,
     enabled: Boolean,
     label: String,
     lastNo: Int?,
     index: Int,
     total: Int,
     onSeek: (Int) -> Unit,
-    onPick: (Mark?) -> Unit,
+    onAmber: () -> Unit,
 ) {
-    // 지금 보고 있는 목록에서 옮겨 갈 수 있는 두 곳
-    val pair = when (filter) {
-        null -> listOf(Verdict(Hak3.Amber, Mark.AMBER), Verdict(Hak3.Red, Mark.RED))
-        Mark.AMBER -> listOf(Verdict(Hak3.Green, Mark.KNOWN), Verdict(Hak3.Red, Mark.RED))
-        Mark.RED -> listOf(Verdict(Hak3.Green, Mark.KNOWN), Verdict(Hak3.Amber, Mark.AMBER))
-        Mark.KNOWN -> listOf(Verdict(Hak3.Amber, Mark.AMBER), Verdict(Hak3.Red, Mark.RED))
-    }
     Row(
         modifier
             .fillMaxWidth()
@@ -526,7 +511,7 @@ private fun BottomBar(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        VerdictDot(pair[0], enabled, onPick)
+        SettingsDot()
         Scrubber(
             Modifier.weight(1f),
             index = index,
@@ -534,17 +519,31 @@ private fun BottomBar(
             text = if (lastNo != null) "$label / $lastNo" else "${label}번 · ${index + 1} / $total",
             onSeek = onSeek,
         )
-        VerdictDot(pair[1], enabled, onPick)
+        AmberDot(enabled, onAmber)
+    }
+}
+
+/** 아직 열 화면이 없다. 자리만 잡아 둔다. */
+@Composable
+private fun SettingsDot() {
+    Box(
+        Modifier
+            .size(BAR)
+            .background(Hak3.Surface, CircleShape)
+            .border(Dp.Hairline, Hak3.Rule, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text("⚙", fontSize = 20.sp, color = Hak3.TextDim)
     }
 }
 
 @Composable
-private fun VerdictDot(v: Verdict, enabled: Boolean, onPick: (Mark?) -> Unit) {
+private fun AmberDot(enabled: Boolean, onPick: () -> Unit) {
     Box(
         Modifier
             .size(BAR)
-            .background(if (enabled) v.color else v.color.copy(alpha = 0.2f), CircleShape)
-            .clickable(enabled = enabled) { onPick(v.mark) }
+            .background(if (enabled) Hak3.Amber else Hak3.Amber.copy(alpha = 0.2f), CircleShape)
+            .clickable(enabled = enabled, onClick = onPick)
     )
 }
 

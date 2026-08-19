@@ -100,7 +100,6 @@ private fun RoundCell(e: ExamRow, radius: Dp, onPick: (Int) -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Tally(Hak3.Green, counts.known)
                 Tally(Hak3.Amber, counts.amber)
-                Tally(Hak3.Red, counts.red)
             }
         } else {
             Text(
