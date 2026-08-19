@@ -1,0 +1,17 @@
+build/
+.gradle/
+.idea/
+*.iml
+local.properties
+.DS_Store
+
+# 빌드 산출물 — 릴리스에 첨부한다
+dist/*.apk
+
+# 서명 키. 잃어버리면 앱을 다시는 갱신할 수 없으니 따로 백업해 둘 것.
+keystore/
+keystore.properties
+
+# 폰트 원본과 중간 산출물. tools/make_font.py 로 다시 만든다.
+tools/NotoSansKR-var.ttf
+tools/NotoSansKR-Thin.ttf
