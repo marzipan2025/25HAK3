@@ -5,7 +5,14 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -41,36 +48,25 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+/**
+ * 첫 화면은 회차 목록뿐이다. 이름도 판 번호도 적지 않는다 — 그런 것들은 설정에 있다.
+ * 새 판이 나온 것만 위에서 내려오는 알림으로 알린다.
+ */
 @Composable
-fun RoundPicker(exams: List<ExamRow>, meta: Map<String, String>, onPick: (Int) -> Unit) {
+fun RoundPicker(exams: List<ExamRow>, onPick: (Int) -> Unit) {
     // 상세 화면 카드와 같은 곡률
     val radius = (screenCornerRadius() - 8.dp).coerceAtLeast(0.dp)
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(112.dp),
-        // 좌우 여백은 상세 화면 카드와 같은 8dp
-        contentPadding = PaddingValues(8.dp, 8.dp, 8.dp, 32.dp),
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        item(span = { GridItemSpan(maxLineSpan) }) {
-            Column(Modifier.padding(bottom = 14.dp, top = 12.dp)) {
-                Text(
-                    "25HAK3",
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Hak3.Text,
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    meta["built"]?.let { "데이터 $it" } ?: "",
-                    fontSize = 14.sp,
-                    color = Hak3.TextDim,
-                )
-                Spacer(Modifier.height(10.dp))
-                UpdateLine()
-            }
+    Box(Modifier.fillMaxSize()) {
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(112.dp),
+            // 좌우 여백은 상세 화면 카드와 같은 8dp
+            contentPadding = PaddingValues(8.dp, 8.dp, 8.dp, 32.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            items(exams, key = { it.round }) { e -> RoundCell(e, radius, onPick) }
         }
-        items(exams, key = { it.round }) { e -> RoundCell(e, radius, onPick) }
+        UpdateSnack(Modifier.align(Alignment.TopCenter))
     }
 }
 
@@ -129,8 +125,12 @@ private fun RoundCell(e: ExamRow, radius: Dp, onPick: (Int) -> Unit) {
  * 판 번호를 적어 두고, 새 판이 있으면 눌러서 받도록 한다.
  * 받은 뒤에는 시스템 설치 화면이 뜨고, 설치할지는 거기서 사용자가 정한다.
  */
+/**
+ * 새 판이 있을 때만 위에서 미끄러져 내려온다. 목록을 가리지 않도록 한 줄로 두고,
+ * 누르면 받아서 설치까지 이어진다. 받는 동안에는 그 자리에서 몇 %인지 알린다.
+ */
 @Composable
-private fun UpdateLine() {
+private fun UpdateSnack(modifier: Modifier) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf<Updater.Status>(Updater.Status.Checking) }
@@ -138,42 +138,52 @@ private fun UpdateLine() {
 
     LaunchedEffect(Unit) { status = Updater.check(BuildConfig.VERSION_NAME) }
 
-    val here = "v ${BuildConfig.VERSION_NAME}"
-    val fresh = status as? Updater.Status.Available
+    // 사라지는 동안에도 무엇을 적을지 알아야 하므로 한 번 잡은 것은 들고 있는다
+    val fresh = (status as? Updater.Status.Available)?.release
+    var shown by remember { mutableStateOf<Updater.Release?>(null) }
+    LaunchedEffect(fresh) { if (fresh != null) shown = fresh }
 
-    if (fresh == null) {
-        Text(here, fontSize = 13.sp, color = Hak3.TextDim)
-        return
-    }
-    Text(
-        when {
-            progress == -2f -> "$here · ${fresh.release.version} 새 판 받기"
-            progress < 0f -> "받는 중…"
-            progress < 1f -> "받는 중 ${(progress * 100).toInt()}%"
-            else -> "설치를 눌러 주세요"
-        },
-        fontSize = 13.sp,
-        color = Hak3.Amber,
-        modifier = Modifier
-            .border(1.dp, Hak3.Amber.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
-            .clickable(enabled = progress == -2f) {
-                val url = fresh.release.apkUrl
-                if (url == null) {
-                    Updater.openReleasesPage(context)
-                    return@clickable
-                }
-                progress = -1f
-                scope.launch {
-                    val apk = Updater.download(context, url, fresh.release.version) { progress = it }
-                    if (apk == null) {
-                        progress = -2f
+    AnimatedVisibility(
+        visible = fresh != null,
+        enter = slideInVertically { -it } + fadeIn(),
+        exit = slideOutVertically { -it } + fadeOut(),
+        modifier = modifier,
+    ) {
+        val release = shown ?: return@AnimatedVisibility
+        Text(
+            when {
+                progress == -2f -> "새 판 ${release.version} 받기"
+                progress < 0f -> "받는 중…"
+                progress < 1f -> "받는 중 ${(progress * 100).toInt()}%"
+                else -> "설치를 눌러 주세요"
+            },
+            fontSize = 14.sp,
+            color = Hak3.Amber,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .padding(8.dp)
+                .fillMaxWidth()
+                .background(Hak3.Surface, CircleShape)
+                .border(Dp.Hairline, Hak3.Amber.copy(alpha = 0.5f), CircleShape)
+                .clickable(enabled = progress == -2f) {
+                    val url = release.apkUrl
+                    if (url == null) {
                         Updater.openReleasesPage(context)
-                    } else {
-                        progress = 1f
-                        Updater.install(context, apk)
+                        return@clickable
+                    }
+                    progress = -1f
+                    scope.launch {
+                        val apk = Updater.download(context, url, release.version) { progress = it }
+                        if (apk == null) {
+                            progress = -2f
+                            Updater.openReleasesPage(context)
+                        } else {
+                            progress = 1f
+                            Updater.install(context, apk)
+                        }
                     }
                 }
-            }
-            .padding(horizontal = 9.dp, vertical = 5.dp),
-    )
+                .padding(horizontal = 18.dp, vertical = 15.dp),
+        )
+    }
 }

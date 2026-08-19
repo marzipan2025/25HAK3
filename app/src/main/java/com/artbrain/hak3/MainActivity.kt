@@ -93,7 +93,7 @@ private fun Root() {
 
     val round = open
     if (round == null) {
-        RoundPicker(ready.exams(), ready.meta()) { open = it }
+        RoundPicker(ready.exams()) { open = it }
     } else {
         BackHandler { open = null }
         ExamScreen(round, ready) { open = null }
