@@ -17,8 +17,10 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animate
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -333,27 +335,45 @@ private fun QuestionPage(
     val item = page.item
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
-    // 카드를 얼마나 들어 올렸는가. 문항이 바뀌면 처음부터.
-    val lift = remember(item.no) { Animatable(0f) }
+    /*
+     * 카드를 얼마나 들어 올렸는가. 문항이 바뀌면 처음부터.
+     *
+     * 손짓은 코루틴을 거치지 않고 이 값에 곧바로 쌓는다. 한 손짓마다 코루틴을 띄워
+     * 옮기면, 손을 뗀 뒤에야 도착한 마지막 손짓이 제자리로 돌아가던 애니메이션을
+     * 밀어내고 카드를 어중간한 자리에 세워 놓는다.
+     */
+    var lift by remember(item.no) { mutableFloatStateOf(0f) }
     var wide by remember(item.no) { mutableFloatStateOf(1000f) }
     // 잡은 손이 카드 가운데에서 얼마나 치우쳤는가. -1(왼쪽 끝) ~ +1(오른쪽 끝).
     var arm by remember(item.no) { mutableFloatStateOf(0f) }
     // 한 번 끄는 동안 판정은 한 번뿐이다. 문턱을 넘나들며 색이 뒤집히지 않게.
     var settled by remember(item.no) { mutableStateOf(false) }
+    // 제자리로 돌아가는 중인 몸짓. 카드를 다시 잡으면 멈춘다.
+    var homing by remember(item.no) { mutableStateOf<Job?>(null) }
     val reach = with(density) { REACH.toPx() }
     val tilt = with(density) { TILT.toPx() }
     // 잡은 자리를 축 삼아 도는 시늉. 왼쪽 아래를 잡고 올리면 오른쪽으로 기운다.
     // 문턱과 따로 두어 기울기는 예전 손맛 그대로다.
-    val spin = (arm * (lift.value / tilt) * 5f).coerceIn(-12f, 12f)
+    val spin = (arm * (lift / tilt) * 5f).coerceIn(-12f, 12f)
+
+    /** 어느 자리에 있든 0으로 돌려놓는다. 돌아가던 것이 있으면 그것부터 접는다. */
+    fun home(spec: AnimationSpec<Float>, then: (suspend () -> Unit)? = null) {
+        homing?.cancel()
+        homing = scope.launch {
+            animate(lift, 0f, animationSpec = spec) { v, _ -> lift = v }
+            lift = 0f
+            then?.invoke()
+        }
+    }
 
     // 들려 있는 동안에는 캡슐과 바닥 줄 위로 올라온다
-    LaunchedEffect(lift.value != 0f) { onLifted(lift.value != 0f) }
+    LaunchedEffect(lift != 0f) { onLifted(lift != 0f) }
 
     Box(
         Modifier
             .fillMaxSize()
             .graphicsLayer {
-                translationY = lift.value
+                translationY = lift
                 rotationZ = spin
             }
             .background(Hak3.Surface, RoundedCornerShape(radius))
@@ -364,32 +384,30 @@ private fun QuestionPage(
             .draggable(
                 state = rememberDraggableState { dy ->
                     if (settled) return@rememberDraggableState
-                    val next = lift.value + dy
-                    // 판정은 손가락이 문턱을 넘는 그 자리에서 바로. 코루틴을 기다리면
-                    // 그 사이 들어온 손짓이 한 번 더 판정해 버린다.
-                    if (kotlin.math.abs(next) > reach) {
+                    lift += dy
+                    // 판정은 손가락이 문턱을 넘는 그 자리에서 바로.
+                    if (kotlin.math.abs(lift) > reach) {
                         settled = true
-                        val turned = step(mark, next < 0f)
-                        scope.launch {
-                            if (turned != mark) onMark(turned)
-                            lift.animateTo(0f, RETURN)
+                        val turned = step(mark, lift < 0f)
+                        if (turned != mark) onMark(turned)
+                        home(RETURN) {
                             // 제자리에 앉는 것을 보고 나서 넘긴다
                             if (turned != mark) {
                                 delay(HOLD)
                                 onAdvance()
                             }
                         }
-                    } else {
-                        scope.launch { lift.snapTo(next) }
                     }
                 },
                 orientation = Orientation.Vertical,
                 onDragStarted = { at ->
+                    // 돌아가는 중이더라도 다시 잡으면 손을 따른다
+                    homing?.cancel()
                     arm = ((at.x / wide) * 2f - 1f).coerceIn(-1f, 1f)
                 },
                 onDragStopped = {
                     // 문턱을 못 넘고 손을 뗐으면 제자리로. 넘었으면 이미 돌아가는 중이다.
-                    if (!settled) lift.animateTo(0f, SETTLE)
+                    if (!settled) home(SETTLE)
                     settled = false
                 },
             )
