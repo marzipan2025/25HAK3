@@ -53,16 +53,17 @@ fun RoundPicker(exams: List<ExamRow>, meta: Map<String, String>, onPick: (Int) -
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(Modifier.padding(bottom = 14.dp, top = 12.dp)) {
                 Text(
-                    "한자능력검정 ${meta["grade"] ?: "3급"}",
+                    "25HAK3",
                     fontSize = 22.sp,
-                    fontWeight = FontWeight.Normal,
+                    fontWeight = FontWeight.Bold,
                     color = Hak3.Text,
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "기출 ${exams.size}회 · ${span.minOrNull() ?: ""}–${span.maxOrNull() ?: ""}" +
+                    "한자능력검정 ${meta["grade"] ?: "3급"} · 기출 ${exams.size}회 · " +
+                        "${span.minOrNull() ?: ""}–${span.maxOrNull() ?: ""}" +
                         (meta["built"]?.let { " · 데이터 $it" } ?: ""),
-                    fontSize = 12.sp,
+                    fontSize = 14.sp,
                     color = Hak3.TextDim,
                 )
                 Spacer(Modifier.height(10.dp))
@@ -139,7 +140,7 @@ private fun UpdateLine() {
     val fresh = status as? Updater.Status.Available
 
     if (fresh == null) {
-        Text(here, fontSize = 11.sp, color = Hak3.TextDim)
+        Text(here, fontSize = 13.sp, color = Hak3.TextDim)
         return
     }
     Text(
@@ -149,7 +150,7 @@ private fun UpdateLine() {
             progress < 1f -> "받는 중 ${(progress * 100).toInt()}%"
             else -> "설치를 눌러 주세요"
         },
-        fontSize = 11.sp,
+        fontSize = 13.sp,
         color = Hak3.Amber,
         modifier = Modifier
             .border(1.dp, Hak3.Amber.copy(alpha = 0.6f), RoundedCornerShape(6.dp))

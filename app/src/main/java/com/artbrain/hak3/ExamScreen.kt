@@ -180,9 +180,16 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
                             border = filter,
                             radius = radius,
                             onLifted = { lifted = it },
-                            // 카드가 제자리로 돌아오므로 다음 문항으로 넘기지 않는다.
-                            // 표시를 고친 자리를 눈으로 확인하고 넘어가도록.
-                            onMark = { m -> marks.set(p.item.no, m) },
+                            // 표시가 실제로 바뀌었을 때만 다음 문항으로. 양 끝에서 더 민
+                            // 경우(초록을 또 위로)는 바뀐 게 없으니 그 자리에 머문다.
+                            onMark = { m ->
+                                if (m != marks.state[p.item.no]) {
+                                    marks.set(p.item.no, m)
+                                    if (i < pages.size - 1) {
+                                        scope.launch { pager.animateScrollToPage(i + 1) }
+                                    }
+                                }
+                            },
                         ) { open[p.item.no] = open[p.item.no] != true }
                     }
                 }
