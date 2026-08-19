@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,6 +34,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -48,6 +50,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -61,6 +64,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -123,19 +127,65 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
             filter?.let { f -> all.filter { marks.state[it.item.no] == f } } ?: all
         }
     }
-    val pager = rememberPagerState(pageCount = { pages.size })
+    val start = remember(round, all) {
+        val no = Marks.lastSeen(context, round)
+        all.indexOfFirst { it.item.no == no }.coerceAtLeast(0)
+    }
+    val pager = rememberPagerState(initialPage = start, pageCount = { pages.size })
     val scope = rememberCoroutineScope()
     val radius = (screenCornerRadius() - OUTER).coerceAtLeast(0.dp)
+    // 카드가 날아가는 동안만 카드층을 맨 위로. 그 사이 두 줄은 눌리지 않지만 200ms 뿐이다.
+    var flying by remember(round) { mutableStateOf(false) }
     val index = pager.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
     val page = pages.getOrNull(index)
+    // 이 회차를 다음에 열 때 여기서부터 보여 준다
+    LaunchedEffect(round, page?.item?.no) {
+        page?.item?.no?.let { Marks.setLastSeen(context, round, it) }
+    }
 
-    Column(
+    // 카드가 캡슐 위로 날아가야 하므로 pager 를 화면 전체로 깔고, 카드만 캡슐·바닥 줄
+    // 안쪽으로 밀어 둔다. pager 는 제 영역 밖을 잘라내기 때문에 이렇게 하지 않으면
+    // 카드가 캡슐께에서 잘려 사라진다. 바닥 줄은 pager 뒤에 두어 조작을 뺏기지 않는다.
+    val inset = PaddingValues(top = TOP + OUTER, bottom = BAR + BAR / 4)
+    Box(
         Modifier
             .fillMaxSize()
             .background(Hak3.Ground)
             .padding(OUTER)
     ) {
+        if (pages.isEmpty()) {
+            EmptyList(filter, Modifier.fillMaxSize().padding(inset), radius)
+        } else {
+            HorizontalPager(
+                state = pager,
+                modifier = Modifier.fillMaxSize().zIndex(if (flying) 1f else 0f),
+                pageSpacing = 6.dp,
+            ) { i ->
+                pages.getOrNull(i)?.let { p ->
+                    Box(Modifier.fillMaxSize().padding(inset)) {
+                        QuestionPage(
+                            page = p,
+                            revealed = open[p.item.no] == true,
+                            mark = marks.state[p.item.no],
+                            border = filter,
+                            radius = radius,
+                            onFlying = { flying = it },
+                            onVerdict = { m ->
+                                marks.set(p.item.no, m)
+                                if (filter == null && index < pages.size - 1) {
+                                    scope.launch { pager.animateScrollToPage(index + 1) }
+                                }
+                            },
+                        ) { open[p.item.no] = open[p.item.no] != true }
+                    }
+                }
+            }
+        }
+
+        // 캡슐과 바닥 줄은 pager 뒤에 둔다 — 앞에 두면 pager 가 눌림을 가로챈다.
+        // pager 는 화면 전체를 차지하므로 카드는 잘리지 않고 이 줄들 아래로 미끄러져 나간다.
         TopBar(
+            modifier = Modifier.align(Alignment.TopStart),
             round = round,
             section = page?.section,
             filter = filter,
@@ -148,40 +198,9 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
             onBack = onBack,
         )
 
-        Spacer(Modifier.height(OUTER))
-
-        if (pages.isEmpty()) {
-            EmptyList(filter, Modifier.weight(1f), radius)
-        } else {
-            HorizontalPager(
-                state = pager,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                pageSpacing = 6.dp,
-            ) { i ->
-                pages.getOrNull(i)?.let { p ->
-                    QuestionPage(
-                        page = p,
-                        revealed = open[p.item.no] == true,
-                        mark = marks.state[p.item.no],
-                        border = filter,
-                        radius = radius,
-                        onKnow = {
-                            marks.set(p.item.no, Mark.KNOWN)
-                            if (filter == null && index < pages.size - 1) {
-                                scope.launch { pager.animateScrollToPage(index + 1) }
-                            }
-                        },
-                    ) { open[p.item.no] = open[p.item.no] != true }
-                }
-            }
-        }
-
-        // 카드와 바닥 줄 사이는 판정 원 지름의 1/4
-        Spacer(Modifier.height(BAR / 4))
 
         BottomBar(
+            modifier = Modifier.align(Alignment.BottomStart),
             filter = filter,
             enabled = page != null,
             label = page?.item?.label ?: "",
@@ -192,8 +211,6 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
         ) { chosen ->
             val no = page?.item?.no ?: return@BottomBar
             marks.set(no, chosen)
-            // 평상시에는 표시하고 다음 문항으로. 필터 중에는 이 문항이 목록에서
-            // 빠지면서 다음 문항이 저절로 그 자리로 올라온다.
             if (filter == null && index < pages.size - 1) {
                 scope.launch { pager.animateScrollToPage(index + 1) }
             }
@@ -203,6 +220,7 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
 
 @Composable
 private fun TopBar(
+    modifier: Modifier,
     round: Int,
     section: Section?,
     filter: Mark?,
@@ -212,7 +230,7 @@ private fun TopBar(
     onBack: () -> Unit,
 ) {
     Box(
-        Modifier
+        modifier
             .fillMaxWidth()
             .height(TOP)
             .background(Hak3.Surface, CircleShape)
@@ -298,7 +316,8 @@ private fun QuestionPage(
     mark: Mark?,
     border: Mark?,
     radius: Dp,
-    onKnow: () -> Unit,
+    onFlying: (Boolean) -> Unit,
+    onVerdict: (Mark) -> Unit,
     onTap: () -> Unit,
 ) {
     val item = page.item
@@ -307,13 +326,15 @@ private fun QuestionPage(
     // 카드를 얼마나 들어 올렸는가. 문항이 바뀌면 처음부터.
     val lift = remember(item.no) { Animatable(0f) }
     var tall by remember(item.no) { mutableFloatStateOf(1200f) }
-    // 카드 위쪽에 머리말이 얹혀 있으므로 그만큼 더 밀어 올려야 완전히 사라진다
-    val away = with(density) { (TOP + OUTER * 3).toPx() }
-    val bar = with(density) { 150.dp.toPx() }        // 이만큼 넘기면 놓아 준다
-    val grip = (-lift.value / bar).coerceIn(0f, 1f)
+    val screen = with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
+    // 뜻을 두고 들었다 싶을 만큼만 움직이면 놓아 준다
+    val bar = with(density) { 80.dp.toPx() }
+    val grip = (kotlin.math.abs(lift.value) / bar).coerceIn(0f, 1f)
+    val up = lift.value < 0f
+    val tint = if (up) Hak3.Green else Hak3.Amber
 
-    val edge = if (grip > 0f) lerp(borderColor(border), Hak3.Green, grip) else borderColor(border)
-    val face = lerp(Hak3.Surface, Hak3.GreenSoft, grip)
+    val edge = if (grip > 0f) lerp(borderColor(border), tint, grip) else borderColor(border)
+    val face = lerp(Hak3.Surface, if (up) Hak3.GreenSoft else Hak3.AmberSoft, grip)
 
     Box(
         Modifier
@@ -325,16 +346,24 @@ private fun QuestionPage(
             // 위로 던지면 '외웠다'. 아래로는 끌리지 않는다.
             .draggable(
                 state = rememberDraggableState { dy ->
-                    scope.launch { lift.snapTo((lift.value + dy).coerceAtMost(0f)) }
+                    scope.launch { lift.snapTo(lift.value + dy) }
                 },
                 orientation = Orientation.Vertical,
                 onDragStopped = {
-                    if (lift.value < -bar) {
-                        // 카드 높이만큼으로는 머리말 아래에서 잘린 채 멈춘다. 화면 위로 온전히 뺀다.
-                        lift.animateTo(-(tall + away), tween(210))
-                        onKnow()
+                    val verdict = when {
+                        lift.value < -bar -> Mark.KNOWN
+                        lift.value > bar -> Mark.AMBER
+                        else -> null
+                    }
+                    if (verdict != null) {
+                        onFlying(true)
+                        // 화면 높이만큼 밀어 카드가 온전히 밖으로 나가게 한다
+                        val to = if (verdict == Mark.KNOWN) -(tall + screen) else tall + screen
+                        lift.animateTo(to, tween(210))
+                        onVerdict(verdict)
                         delay(300)
                         lift.snapTo(0f)
+                        onFlying(false)
                     } else {
                         lift.animateTo(0f, tween(180))
                     }
@@ -451,6 +480,7 @@ private val TOP = 52.dp
  */
 @Composable
 private fun BottomBar(
+    modifier: Modifier,
     filter: Mark?,
     enabled: Boolean,
     label: String,
@@ -468,7 +498,7 @@ private fun BottomBar(
         Mark.KNOWN -> listOf(Verdict(Hak3.Amber, Mark.AMBER), Verdict(Hak3.Red, Mark.RED))
     }
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             .height(BAR),
         horizontalArrangement = Arrangement.spacedBy(6.dp),

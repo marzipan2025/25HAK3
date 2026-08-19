@@ -37,7 +37,8 @@ object Hak3 {
     val Amber = Color(0xFFFFBD2E)           // 애매하게 모름
     val Red = Color(0xFFFF6157)             // 아예 모름
     val Green = Color(0xFF29C745)           // 목록에서 빼기
-    val GreenSoft = Color(0xFF15301C)       // 카드를 들어 올렸을 때의 바탕
+    val GreenSoft = Color(0xFF15301C)       // 카드를 위로 들었을 때의 바탕
+    val AmberSoft = Color(0xFF322611)       // 카드를 아래로 내렸을 때의 바탕
 }
 
 /**

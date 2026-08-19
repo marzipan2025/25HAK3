@@ -55,6 +55,15 @@ class Marks(context: Context, round: Int) {
             .sortedBy { it.key }
             .joinToString(",") { "${it.key}:${tag(it.value)}" }
 
+        /** 그 회차에서 마지막으로 보던 문항 번호. */
+        fun lastSeen(context: Context, round: Int): Int =
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("last_$round", 0)
+
+        fun setLastSeen(context: Context, round: Int, no: Int) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putInt("last_$round", no).apply()
+        }
+
         /** 회차 목록에 표기할 개수. */
         fun counts(context: Context, round: Int): Counts {
             val m = read(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE), keyOf(round))
