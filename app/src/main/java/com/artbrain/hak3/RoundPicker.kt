@@ -107,7 +107,7 @@ private fun RoundCell(e: ExamRow, radius: Dp, onPick: (Int) -> Unit) {
                         withStyle(SpanStyle(color = Hak3.Green)) { append("${counts.known}") }
                     }
                 },
-                fontSize = 11.sp,
+                fontSize = 13.sp,
             )
         } else {
             Text(

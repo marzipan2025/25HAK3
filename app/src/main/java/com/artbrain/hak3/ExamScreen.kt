@@ -87,6 +87,34 @@ private val HANJA = Regex("[\\u3400-\\u4DBF\\u4E00-\\u9FFF\\uF900-\\uFAFF]")
  */
 private const val GLUE = '\u2060'
 
+/** 문제에서 눈에 띄어야 할 말. 무엇을 묻는 유형인지가 여기서 갈린다. */
+private val LOUD = listOf("略字", "部首")
+
+/**
+ * 문제 한 줄. 略字·部首 만 흰색으로 도드라지게 하고 나머지는 흐린 색 그대로 둔다.
+ * 이음쇠는 토막마다 넣는다 — 다 붙인 뒤에 찾으면 글자 사이가 벌어져 안 잡힌다.
+ */
+private fun instruction(s: String): AnnotatedString = buildAnnotatedString {
+    val loud = SpanStyle(color = Hak3.Text)
+    var i = 0
+    var prev = ' '
+    while (i < s.length) {
+        val hit = LOUD.firstOrNull { s.startsWith(it, i) }
+        if (hit != null) {
+            withStyle(loud) { append(glue(hit, prev)) }
+            prev = hit.last()
+            i += hit.length
+            continue
+        }
+        var j = i + 1
+        while (j < s.length && LOUD.none { s.startsWith(it, j) }) j++
+        val chunk = s.substring(i, j)
+        append(glue(chunk, prev))
+        prev = chunk.last()
+        i = j
+    }
+}
+
 private fun glue(s: String, before: Char = ' '): String = buildString {
     var prev = before
     for (c in s) {
@@ -548,8 +576,8 @@ private fun QuestionPage(
         // 무엇을 묻는 문제인지는 카드 맨 위 한가운데 따로 세운다.
         // 아래 것들과 한 흐름으로 두지 않는다 — 자리도 정렬도 따로 간다.
         Text(
-            glue(page.section.instruction),
-            fontSize = 15.sp,
+            instruction(page.section.instruction),
+            fontSize = 16.sp,
             lineHeight = 22.sp,
             color = Hak3.TextDim,
             textAlign = TextAlign.Center,
