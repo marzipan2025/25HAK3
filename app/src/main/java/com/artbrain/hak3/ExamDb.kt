@@ -82,6 +82,21 @@ class ExamDb private constructor(private val db: SQLiteDatabase) {
         return if (marks.isEmpty()) item else item.copy(gloss = marks.joinToString("\n"))
     }
 
+    /** 한 글자의 訓音. 단어장 카드에 그대로 적는다. */
+    fun hunmeum(han: String): String? = gloss(han)
+
+    /**
+     * 이 문항에 나오는 한자들. 訓音 을 댈 수 있는 것만, 나온 순서대로.
+     * 단어장에 쌓을 때 쓴다 — 카드에 붙는 訓音 과 같은 자리에서 고른다.
+     */
+    fun hanjaOf(item: Item): List<String> {
+        val seen = LinkedHashSet<String>()
+        listOfNotNull(item.question, item.target, item.answer).forEach { src ->
+            src.filter(::isHanja).forEach { seen.add(nfc(it)) }
+        }
+        return seen.filter { gloss(it) != null }
+    }
+
     private fun gloss(han: String): String? = db.rawQuery(
         "SELECT gloss FROM hunmeum WHERE han=?", arrayOf(han)
     ).use { c -> if (c.moveToNext()) c.getString(0) else null }
@@ -104,6 +119,27 @@ class ExamDb private constructor(private val db: SQLiteDatabase) {
                 )
             }
         }
+    }
+
+    /** 회차를 가리지 않고 (회차, 번호)로 한 문항을 그 구역과 함께 집어 온다. */
+    fun pick(round: Int, no: Int): Pair<Section, Item>? = db.rawQuery(
+        "SELECT s.id, s.start_no, s.end_no, s.instruction," +
+            " i.no, i.span_end, i.question, i.question_html, i.target, i.answer" +
+            " FROM items i JOIN sections s ON s.id = i.section_id" +
+            " WHERE i.round=? AND i.no=?",
+        arrayOf(round.toString(), no.toString())
+    ).use { c ->
+        if (!c.moveToNext()) return@use null
+        val section = Section(c.getInt(0), c.getInt(1), c.getInt(2), c.getString(3) ?: "", emptyList())
+        val item = Item(
+            no = c.getInt(4),
+            spanEnd = c.getInt(5),
+            question = c.getString(6) ?: "",
+            html = c.getString(7),
+            target = c.getString(8),
+            answer = c.getString(9),
+        )
+        section to withGloss(item)
     }
 
     fun meta(): Map<String, String> = db.rawQuery("SELECT key, value FROM meta", null).use { c ->

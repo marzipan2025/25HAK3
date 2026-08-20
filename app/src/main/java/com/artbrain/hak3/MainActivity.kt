@@ -56,6 +56,7 @@ private fun Root() {
     var state by remember { mutableStateOf<DataFile.Result?>(null) }
     var reload by remember { mutableStateOf(0) }
     var open by remember { mutableStateOf<Int?>(null) }
+    var words by remember { mutableStateOf(false) }
 
     val pickFolder = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -79,6 +80,8 @@ private fun Root() {
         state = r
         db?.close()
         db = (r as? DataFile.Result.Ok)?.let { ExamDb.open(it.file) }
+        // 단어장을 만들기 전에 찍어 둔 노랑도 살려 둔다
+        db?.let { Collect.seed(context, it) }
     }
 
     val ready = db
@@ -92,11 +95,16 @@ private fun Root() {
     }
 
     val round = open
-    if (round == null) {
-        RoundPicker(ready.exams()) { open = it }
-    } else {
-        BackHandler { open = null }
-        ExamScreen(round, ready) { open = null }
+    when {
+        words -> {
+            BackHandler { words = false }
+            WordScreen(ready) { words = false }
+        }
+        round != null -> {
+            BackHandler { open = null }
+            ExamScreen(round, ready) { open = null }
+        }
+        else -> RoundPicker(ready.exams(), onPick = { open = it }, onWords = { words = true })
     }
 }
 

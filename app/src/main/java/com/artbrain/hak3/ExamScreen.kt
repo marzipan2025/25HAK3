@@ -45,6 +45,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -125,7 +126,11 @@ private fun glue(s: String, before: Char = ' '): String = buildString {
 }
 private val OUTER = 8.dp
 
-private class Page(val section: Section, val item: Item)
+/**
+ * 카드 한 장. `id` 는 표시를 걸어 두는 이름이다 — 회차에서는 `113:7`, 단어장에서는
+ * 글자 그 자체가 된다. 이렇게 두면 같은 화면으로 둘 다 넘길 수 있다.
+ */
+private class Page(val round: Int, val section: Section, val item: Item, val id: String)
 
 private fun borderColor(m: Mark?) = when (m) {
     Mark.AMBER -> Hak3.Amber
@@ -198,38 +203,121 @@ private fun headSize(w: Float) = when {
 }
 
 
+/** 한 회차를 넘긴다. 표시는 그 회차에 남는다. */
 @Composable
 fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
     val context = LocalContext.current
     val all = remember(round) {
-        db.sections(round).flatMap { s -> s.items.map { Page(s, it) } }
+        db.sections(round).flatMap { s -> s.items.map { Page(round, s, it, "$round:${it.no}") } }
     }
-    val marks = remember(round) { Marks(context.applicationContext, round) }
-    var filter by remember(round) { mutableStateOf<Mark?>(null) }
-    val open = remember(round) { mutableStateMapOf<Int, Boolean>() }
-
-    // 목록을 열면 그때의 구성을 붙잡아 둔다. 판정으로 목록에서 빠져도 카드는 그 자리에
-    // 남아, 노랑을 한 번 올려 일반으로, 한 번 더 올려 초록으로 이어 갈 수 있다.
-    // 담긴 수는 위 필터 원의 숫자가 곧바로 알려 준다.
-    var listed by remember(round) { mutableStateOf<List<Page>?>(null) }
-    val pages = listed ?: all
+    val book = remember(round) { Marks(context.applicationContext, round) }
+    val marks = remember(round) {
+        mutableStateMapOf<String, Mark>().apply {
+            book.state.forEach { (no, m) -> put("$round:$no", m) }
+        }
+    }
     val start = remember(round, all) {
         val no = Marks.lastSeen(context, round)
         all.indexOfFirst { it.item.no == no }.coerceAtLeast(0)
     }
+    Deck(
+        all = all,
+        title = "제${round}회",
+        subOf = { p -> "問 ${p.section.start}–${p.section.end}" },
+        marks = marks,
+        numbered = true,
+        start = start,
+        built = db.meta()["built"],
+        onMark = { p, m ->
+            book.set(p.item.no, m)
+            if (m == null) marks.remove(p.id) else marks[p.id] = m
+            // 노랑으로 담은 문항의 한자는 단어장에 쌓는다. 이미 있는 글자는 그냥 넘어간다.
+            if (m == Mark.AMBER) Collect.register(context, db.hanjaOf(p.item))
+        },
+        onSeen = { p -> Marks.setLastSeen(context, round, p.item.no) },
+        onBack = onBack,
+    )
+}
+
+/**
+ * 단어장. 노랑으로 담은 문항에서 모은 한자를 한 글자씩 넘긴다.
+ * 여기의 표시는 회차의 표시와 따로 논다.
+ */
+@Composable
+fun WordScreen(db: ExamDb, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val all = remember {
+        Collect.order(context).mapIndexedNotNull { i, han ->
+            val meaning = db.hunmeum(han) ?: return@mapIndexedNotNull null
+            val section = Section(0, 0, 0, "다음 漢字의 訓과 音을 쓰시오.", emptyList())
+            val item = Item(
+                no = i + 1,
+                spanEnd = 0,
+                question = han,
+                html = null,
+                target = han,
+                answer = meaning,
+            )
+            Page(0, section, item, han)
+        }
+    }
+    val marks = remember {
+        mutableStateMapOf<String, Mark>().apply { putAll(Collect.marks(context)) }
+    }
+    Deck(
+        all = all,
+        title = "단어장",
+        subOf = { null },
+        marks = marks,
+        numbered = false,
+        start = 0,
+        built = db.meta()["built"],
+        onMark = { p, m ->
+            Collect.set(context, p.id, m)
+            if (m == null) marks.remove(p.id) else marks[p.id] = m
+        },
+        onSeen = {},
+        onBack = onBack,
+    )
+}
+
+/**
+ * 카드 묶음 하나를 넘기는 화면. 회차든 단어장이든 이 화면을 쓴다.
+ * 어디에 표시를 적어 두는지만 밖에서 정해 준다.
+ */
+@Composable
+private fun Deck(
+    all: List<Page>,
+    title: String,
+    subOf: (Page) -> String?,
+    marks: SnapshotStateMap<String, Mark>,
+    numbered: Boolean,
+    start: Int,
+    built: String?,
+    onMark: (Page, Mark?) -> Unit,
+    onSeen: (Page) -> Unit,
+    onBack: () -> Unit,
+) {
+    val context = LocalContext.current
+    var filter by remember(all) { mutableStateOf<Mark?>(null) }
+    val open = remember(all) { mutableStateMapOf<String, Boolean>() }
+
+    // 목록을 열면 그때의 구성을 붙잡아 둔다. 판정으로 목록에서 빠져도 카드는 그 자리에
+    // 남아, 노랑을 한 번 올려 일반으로, 한 번 더 올려 초록으로 이어 갈 수 있다.
+    // 담긴 수는 위 필터 원의 숫자가 곧바로 알려 준다.
+    var listed by remember(all) { mutableStateOf<List<Page>?>(null) }
+    val pages = listed ?: all
     val pager = rememberPagerState(initialPage = start, pageCount = { pages.size })
     val scope = rememberCoroutineScope()
     val radius = (screenCornerRadius() - OUTER).coerceAtLeast(0.dp)
     // 카드를 들고 있는 동안만 카드층을 맨 위로. 그동안 두 줄은 눌리지 않는다.
-    var lifted by remember(round) { mutableStateOf(false) }
-    var settings by remember(round) { mutableStateOf(false) }
-    var markOnLeft by remember(round) { mutableStateOf(Settings.markOnLeft(context)) }
+    var lifted by remember(all) { mutableStateOf(false) }
+    var settings by remember(all) { mutableStateOf(false) }
+    var markOnLeft by remember(all) { mutableStateOf(Settings.markOnLeft(context)) }
     val index = pager.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
     val page = pages.getOrNull(index)
-    // 이 회차를 다음에 열 때 여기서부터 보여 준다
-    LaunchedEffect(round, page?.item?.no) {
-        page?.item?.no?.let { Marks.setLastSeen(context, round, it) }
-    }
+    // 다음에 열 때 여기서부터 보여 준다
+    LaunchedEffect(all, page?.id) { page?.let(onSeen) }
 
     // 카드가 캡슐 위로 날아가야 하므로 pager 를 화면 전체로 깔고, 카드만 캡슐·바닥 줄
     // 안쪽으로 밀어 둔다. pager 는 제 영역 밖을 잘라내기 때문에 이렇게 하지 않으면
@@ -254,11 +342,11 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
                     Box(Modifier.fillMaxSize().padding(inset)) {
                         QuestionPage(
                             page = p,
-                            revealed = open[p.item.no] == true,
-                            mark = marks.state[p.item.no],
+                            revealed = open[p.id] == true,
+                            mark = marks[p.id],
                             radius = radius,
                             onLifted = { lifted = it },
-                            onMark = { m -> marks.set(p.item.no, m) },
+                            onMark = { m -> onMark(p, m) },
                             // 표시가 실제로 바뀌었을 때만 넘어간다. 양 끝에서 더 민
                             // 경우(초록을 또 위로)는 바뀐 게 없으니 그 자리에 머문다.
                             onAdvance = {
@@ -266,7 +354,7 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
                                     scope.launch { pager.animateScrollToPage(i + 1) }
                                 }
                             },
-                        ) { open[p.item.no] = open[p.item.no] != true }
+                        ) { open[p.id] = open[p.id] != true }
                     }
                 }
             }
@@ -276,14 +364,14 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
         // pager 는 화면 전체를 차지하므로 카드는 잘리지 않고 이 줄들 아래로 미끄러져 나간다.
         TopBar(
             modifier = Modifier.align(Alignment.TopStart),
-            round = round,
-            section = page?.section,
+            title = title,
+            sub = page?.let(subOf),
             filter = filter,
-            amber = marks.count(Mark.AMBER),
+            amber = marks.count { it.value == Mark.AMBER },
             onFilter = { f ->
                 val next = if (filter == f) null else f
                 filter = next
-                listed = next?.let { m -> all.filter { marks.state[it.item.no] == m } }
+                listed = next?.let { m -> all.filter { marks[it.id] == m } }
                 scope.launch { pager.scrollToPage(0) }
             },
             onBack = onBack,
@@ -295,13 +383,13 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
             enabled = page != null,
             markOnLeft = markOnLeft,
             label = page?.item?.label ?: "",
-            lastNo = if (filter == null) all.lastOrNull()?.item?.spanEnd else null,
+            lastNo = if (numbered && filter == null) all.lastOrNull()?.item?.spanEnd else null,
             index = index,
             total = pages.size,
             onSeek = { scope.launch { pager.scrollToPage(it) } },
         ) {
-            val no = page?.item?.no ?: return@BottomBar
-            marks.set(no, Mark.AMBER)
+            val p = page ?: return@BottomBar
+            onMark(p, Mark.AMBER)
             if (index < pages.size - 1) {
                 scope.launch { pager.animateScrollToPage(index + 1) }
             }
@@ -310,7 +398,7 @@ fun ExamScreen(round: Int, db: ExamDb, onBack: () -> Unit) {
         // 설정을 열면 남색 단추만 남기고 모두 덮는다
         if (settings) {
             SettingsPanel(
-                built = db.meta()["built"],
+                built = built,
                 markOnLeft = markOnLeft,
                 onMarkSide = { left ->
                     markOnLeft = left
@@ -394,8 +482,8 @@ private fun Side(label: String, on: Boolean, onPick: () -> Unit) {
 @Composable
 private fun TopBar(
     modifier: Modifier,
-    round: Int,
-    section: Section?,
+    title: String,
+    sub: String?,
     filter: Mark?,
     amber: Int,
     onFilter: (Mark) -> Unit,
@@ -415,16 +503,12 @@ private fun TopBar(
         ) {
             FilterDot(Hak3.Amber, filter == Mark.AMBER, amber) { onFilter(Mark.AMBER) }
         }
-        // 회차와 문항 구간은 한 덩이로 캡슐 한가운데
+        // 제목과 곁줄은 한 덩이로 캡슐 한가운데
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("제${round}회", fontSize = 14.sp, color = Hak3.Text)
-            if (section != null) {
+            Text(title, fontSize = 14.sp, color = Hak3.Text)
+            if (sub != null) {
                 Spacer(Modifier.width(8.dp))
-                Text(
-                    "問 ${section.start}–${section.end}",
-                    fontSize = 14.sp,
-                    color = Hak3.Hanja,
-                )
+                Text(sub, fontSize = 14.sp, color = Hak3.Hanja)
             }
         }
         Box(
